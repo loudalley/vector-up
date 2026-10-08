@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from techtool import downloads, engine, package, store
+from techtool import downloads, engine, package, store, terminals, tillops
 
 # Optional: point KUT_REAL_ZIP at a genuine Vector package to test against it.
 REAL_ZIP = os.environ.get("KUT_REAL_ZIP", "")
@@ -174,6 +174,67 @@ class PackageTests(unittest.TestCase):
                          ["InstallationNotes.txt", "Utilities"])
         # the inner archives were NOT unpacked
         self.assertFalse(os.path.exists(os.path.join(p.bo.dir, "Ramset.exe")))
+
+
+class TerminalDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.root = Path(self.td.name)
+    def tearDown(self):
+        self.td.cleanup()
+    def ini(self, content, encoding="utf-8"):
+        path = self.root / "vectorterminals.ini"
+        path.write_text(content, encoding=encoding)
+        return path
+    def test_local_drive_till_is_a_copy_target_and_ini_is_unchanged(self):
+        till = self.root / "till"
+        till.mkdir()
+        path = self.ini(f"[TERMINAL 1]\nName=TILL 1\nEnabled=True\nTerminalLocation={till}\n")
+        before = path.read_bytes()
+        info = terminals.read_terminals(str(self.root))
+        targets = tillops.tills_for_push(info)
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(Path(targets[0]["share"]), till)
+        plan = engine.build_plan([dict(store.new_shop("Shop 0", str(self.root)), _idx=0)], True, True)
+        self.assertEqual([t["key"] for t in plan["targets"]], ["0:bo", "0:t1"])
+        self.assertEqual(path.read_bytes(), before)
+    def test_named_slots_without_locations_stay_visible_but_are_not_targets(self):
+        self.ini("[TERMINAL 1]\nName=TILL 1\nEnabled=False\nTerminalLocation=\n"
+                 "[TERMINAL 2]\nName=\nEnabled=False\nTerminalLocation=\n")
+        info = terminals.read_terminals(str(self.root))
+        visible = tillops.tills_for_display(info)
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(visible[0]["problem"], "No till folder")
+        self.assertEqual(tillops.tills_for_push(info), [])
+    def test_remote_shop_drive_path_never_targets_this_pc(self):
+        self.ini("[TERMINAL 1]\nName=TILL 1\nEnabled=True\nTerminalLocation=C:\\POS\n")
+        info = terminals.read_terminals(str(self.root))
+        info["data_path"] = r"\\10.0.0.1\BO"
+        self.assertEqual(tillops.tills_for_push(info), [])
+        self.assertEqual(tillops.tills_for_display(info)[0]["problem"], "Remote till needs UNC")
+    def test_mapped_remote_bo_drive_does_not_allow_local_paths(self):
+        import ctypes
+        with patch.object(ctypes.windll.kernel32, "GetDriveTypeW", return_value=4):
+            self.assertIsNone(terminals.copy_location(r"C:\POS", r"Z:\BackOffice"))
+    def test_unc_tills_are_still_supported(self):
+        self.ini("[TERMINAL 2]\nName=TILL 2\nLive=-1\nTerminalLocation=\\\\10.0.0.2\\POS\n")
+        info = terminals.read_terminals(str(self.root))
+        self.assertEqual(tillops.tills_for_push(info, {2})[0]["share"], r"\\10.0.0.2\POS")
+        self.assertEqual(tillops.tills_for_push(info, {1}), [])
+    def test_reference_and_relative_paths_are_not_guessed(self):
+        for location in ("@1", "POS", r"C:POS", r"\POS"):
+            self.assertIsNone(terminals.copy_location(location, str(self.root)))
+    def test_parse_error_returns_status_instead_of_stopping_refresh(self):
+        self.ini("[TERMINAL 1]\nName=TILL 1\nName=duplicate\n")
+        info = terminals.read_terminals(str(self.root))
+        self.assertFalse(info["available"])
+        self.assertIn("Could not read VectorTerminals.ini", info["error"])
+    def test_utf8_bom_and_legacy_live_are_supported(self):
+        self.ini("[TERMINAL 1]\nName=TILL 1\nLive=-1\nTerminalLocation=\\\\10.0.0.2\\POS\n", "utf-8-sig")
+        info = terminals.read_terminals(str(self.root))
+        self.assertTrue(info["available"])
+        self.assertEqual(info["enabled_count"], 1)
+        self.assertEqual(len(tillops.tills_for_push(info)), 1)
 
 
 class StoreTests(unittest.TestCase):

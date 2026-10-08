@@ -23,7 +23,12 @@ notes if you want to confirm the file.
 
 1. **Add your shops** (name + the back-office folder holding `Ramset.dat` and
    `VectorTerminals.ini`, e.g. `\\SERVER\Ramset`). The tills are read from that
-   INI. Handles 20+ shops.
+   INI. Handles 20+ shops. Local installations also work: select the local
+   back-office folder containing the INI. A local shop's absolute till folder
+   is supported as well as UNC network shares. Named tills without a usable
+   `TerminalLocation` remain visible with a status message and cannot be
+   selected for copying. A drive path inside a remote shop's INI is never
+   treated as a folder on the technician's PC; remote tills need UNC paths.
 2. **Get or drop Vector's upgrade zip** (the one containing `BO\` and `POS\` folders)
    on the window. It is unpacked and sorted for you. `Utilities\` and
    `InstallationNotes.txt` are never copied. **Get package** opens

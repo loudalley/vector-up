@@ -72,9 +72,14 @@ the user MUST be told. This is not optional and not only for big changes.
 - One window; the user drops Vector's upgrade **zip** containing `BO\` and
   `POS\`. Only the OUTER zip is extracted (`techtool/package.py`). `Utilities\`
   and `InstallationNotes.txt` are never copied.
-- BO files -> each shop's back-office folder; POS files -> each till share read
+- BO files -> each shop's back-office folder; POS files -> each till folder read
   from that shop's `VectorTerminals.ini`. Per till, per back office, per shop,
   ticked, or ALL. **Nothing is ever deleted at a destination.**
+- Till folders can be UNC shares, or absolute drive folders for a local
+  back-office installation. Never apply a remote shop's drive path to the
+  technician PC. Named tills without copy folders must remain visible with a
+  clear status, and be excluded from copying. Find each shop's own INI; never
+  silently use one global local INI for multiple remote shops.
 - The inner `BO_*.zip` / `POS_*.zip` are copied as files, never opened; Vector
   unpacks them itself on next start.
 - `_UpgradeRequired` triggers Vector's upgrade. It must be copied **LAST** and

@@ -95,10 +95,13 @@ def build_plan(shops, do_pos, do_bo):
                                 f"copy POS files to.")
                 continue
             tills = tillops.tills_for_push(info, want_tills)
+            configured = tillops.tills_for_display(info)
+            for t in configured:
+                if not t.get("share") and (want_tills is None or t["number"] in want_tills):
+                    warnings.append(f"{name}: Terminal {t['number']}: {t['problem']} - skipped.")
             if not tills and want_tills is None:
                 warnings.append(
-                    f"{name}: no till has a network share "
-                    f"(\\\\ip\\share) in VectorTerminals.ini.")
+                    f"{name}: no till has a usable copy folder in VectorTerminals.ini.")
             for t in tills:
                 add(target_key(s, POS, t.get("number")), name, POS,
                     t.get("name") or f"Terminal {t.get('number')}", t["share"])

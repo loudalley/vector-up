@@ -13,6 +13,7 @@ This module normalises both into one list for the Setup "Terminals" tab.
 Read-only — never write the INI back.
 """
 import configparser
+import ntpath
 import os
 import re
 
@@ -78,6 +79,7 @@ def read_terminals(data_path):
         "enabled_count": 0,
         "total_with_name": 0,
         "file_version": {},
+        "data_path": data_path,
     }
     ini = find_ini(data_path)
     if not ini:
@@ -96,7 +98,7 @@ def read_terminals(data_path):
         except UnicodeDecodeError:
             with open(ini, "r", encoding="latin-1") as f:
                 cp.read_file(f)
-    except OSError as e:
+    except (OSError, configparser.Error) as e:
         out["error"] = f"Could not read VectorTerminals.ini: {e}"
         return out
 
@@ -151,6 +153,34 @@ def read_terminals(data_path):
         if (t.get("raw", {}).get("Name") or "").strip() or t["location"])
     out["available"] = True
     return out
+
+
+def local_back_office(data_path):
+    """A drive path in a remote shop's INI is not a path on this technician PC."""
+    path = (data_path or "").strip().strip('"')
+    if not path or path.replace("/", "\\").startswith("\\\\"):
+        return False
+    drive, _ = ntpath.splitdrive(path)
+    if not re.fullmatch(r"[A-Za-z]:", drive) or not ntpath.isabs(path):
+        return False
+    if os.name == "nt":
+        import ctypes
+        # Mapped network drives, unknown drives and UNC junctions are remote.
+        if os.path.realpath(path).startswith("\\\\"):
+            return False
+        return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") in (2, 3, 6)
+    return True
+
+
+def copy_location(location, data_path):
+    """UNC folders anywhere; absolute drive folders only for a local BO."""
+    share = share_from_location(location)
+    if share:
+        return share
+    path = (location or "").strip().strip('"').replace("/", "\\")
+    if re.match(r"^[A-Za-z]:\\", path) and local_back_office(data_path):
+        return ntpath.normpath(path)
+    return None
 
 
 def host_from_location(location):

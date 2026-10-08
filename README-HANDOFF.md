@@ -7,88 +7,97 @@ push, and tell the user.
 ## Current state
 
 - **Date / assistant:** 2026-10-08, Codex (GPT-6).
-- **Git confirmation:** UI/backup/download changes committed as `7628b6d` and
-  verified on `origin/master` on 2026-10-08. No application changes in this
-  commit/push follow-up; no tests rerun. Live checks below remain outstanding.
-- **Version:** 1.3.0. Both portable EXEs built locally in `dist/`; no 1.3.0
-  GitHub release published in this turn. Published release remains v1.2.0.
+- **Version:** 1.3.1. Both portable EXEs built locally in `dist/`; no 1.3.1
+  GitHub release published. Published release remains v1.2.0.
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
 - **Local:** `C:\Projects\koenekt-upgrade-tool`.
-- **Origin:** extracted from the private Koenekt Reporter; till helpers are
-  vendored here. The sister project was not edited.
+- **Origin:** extracted from the private Reporter; helpers are vendored here.
+  The sister project was not edited.
 
-### What changed and why
+### Latest fix: tills missing from the list
 
-- User requested nicer theming, fonts and tickboxes. Shared font/colour roles,
-  consistent ttk controls, matching raster checkbox indicators in the tree
-  and settings, clear mixed shop selection, Space to toggle, roomier rows,
-  simpler shop toolbar, high-contrast drop-zone text, and compact package
-  versions keep the destination list usable after a package is loaded.
-- Removed replaced-file backups and their switch. BO backups are manual.
-  Before a POS copy, ONLY `postrans.dat` and `posdebtor.dat` are read from the
-  till and saved beside the portable EXE under
-  `VectorUp_data\POS backups\<shop>\<till - number - identifier>\<timestamp>\`.
-  Source mode/read-only EXE folders use the settings fallback. Both files must
-  exist and be copied successfully or that till receives no upgrade files;
-  other targets continue. Live databases are never modified. An **Open POS
-  backups** button opens the local folder. AGENTS.md now reflects the user's
-  revised policy; thin Claude/Cursor entry points remain unchanged.
-- **Get package** in the drop zone opens Vector's login URL in a small Edge
-  app window (Chrome fallback). Installer enters credentials directly there.
-  A temporary separate browser profile disables password saving and optional
-  browser extensions. Finished session ZIPs import automatically through the
-  Tk queue; partial downloads are ignored. Browser lifetime uses its private
-  loopback endpoint because Edge's launcher can exit while the window remains
-  open. Closing Vector-Up closes that session and removes temporary files.
-  No extra Python dependencies; installed Edge/Chrome required for this button.
-- Package replacements stage into separate temp folders, so an invalid ZIP
-  cannot erase the previous loaded package. Direct `.dat` payload files are
-  excluded. Upgrade marker remains last/withheld on failure. Editing and
-  package controls are disabled while copying or loading.
+- User reported only the pointed BO appeared. The supplied live INI parsed
+  successfully, but its local drive-based till location was filtered out by
+  the UNC-only `tills_for_push` helper. Earlier GUI tests mocked discovery,
+  which hid this defect.
+- Local back-office installations now support absolute local till folders.
+  UNC shares still work. Drive paths from remote BOs, mapped remote BO drives
+  or UNC junctions are never applied to the technician PC. No global INI
+  fallback is used: each shop still reads its own VectorTerminals.ini.
+- All configured/named tills are displayed. Missing/unsupported folders have
+  clear row statuses and disabled tickboxes; those rows are excluded from
+  selection totals and copying. Empty slots remain hidden. Refresh reports
+  configured and usable counts, and INI errors reach the window/log.
+- Malformed INIs return a diagnostic instead of aborting discovery. Engine
+  warnings identify skipped terminal numbers. The GUI check now writes and
+  parses synthetic INIs instead of mocking terminal parsing or path selection.
+- Updated README and the shared AGENTS.md rules. No customer data or real INI
+  was copied into the repo. The supplied INI was read-only; its hash stayed
+  unchanged, and its local POS folder was verified to exist. No upgrade,
+  backup or reachability probe was run against those live destinations.
 
-### Tests actually run (this version)
+### Existing 1.3.0 behaviour retained
 
-- `python tests/test_techtool.py` and `py -3.14-32 tests/test_techtool.py`:
-  **56 tests passed on each**, including the genuine-package test with
-  `KUT_REAL_ZIP`. Initial runs skipped that optional test; final runs did not.
-- `tests/check_techtool_gui.py` on 64-bit and 32-bit Python: **passed**. Real
-  posted WM_DROPFILES, per-row/ticked/ALL copying, mouse checkbox hit testing,
-  keyboard toggling/mixed selection, minimum-size button bounds, local POS
-  snapshots and no automatic BO backups. Uses synthetic shop/till data.
-- `tests/check_vector_download.py` on both architectures: **passed**. Actual
-  Edge app window downloads a synthetic ZIP from a local fixture; Vector-Up
-  imports it and displays package-ready state. Browser/profile cleanup passed.
-  An initial launcher-lifetime failure was fixed before these final checks.
-- Real Windows UI inspected with synthetic destinations at normal and minimum
-  size, including the DPI-aware path. Fonts, checkbox states and spacing viewed.
-- `build_portable.bat`: **both 1.3.0 EXEs built**. Each frozen EXE then started,
-  loaded a synthetic package, and used beside-EXE portable storage in an
-  isolated test directory. EXEs remain ignored; no binaries committed.
-- `git diff --check`: passed. Live Vector login URL returns HTTP 401 when
-  unauthenticated, consistent with its authentication challenge.
+- Shared font/colour roles, consistent ttk controls, matching checkbox images,
+  mixed shop selection and Space-to-toggle; Get package in the drop zone.
+- POS saves ONLY postrans.dat + posdebtor.dat before copying, under local
+  `VectorUp_data\POS backups\<shop>\<till - number - identifier>\<timestamp>\`
+  (settings fallback when needed). Missing/failed backups skip that till.
+  BO backups are manual; no replaced-file backups. Live databases never written.
+- Get package uses a temporary Edge app window/profile, Chrome fallback,
+  installer login, completed-ZIP queue import and profile cleanup. Installed
+  browser required; no extra Python dependencies. Invalid package replacement
+  preserves the loaded package. Marker still last/withheld; nothing deleted.
+
+### Tests actually run for 1.3.1
+
+- 64-bit and 32-bit `tests/test_techtool.py`: **64 tests passed on each** with
+  KUT_REAL_ZIP set, including the genuine-package test. New coverage: actual
+  local INI discovery/plan, no-folder slots, remote/mapped path safety, UNC,
+  invalid INIs, BOM and read-only parsing.
+- `tests/check_techtool_gui.py`: **passed on both architectures** with real
+  synthetic INI discovery, local-folder copying, mouse/keyboard tickboxes,
+  disabled no-folder rows, per-row/ticked/ALL selection, backup/marker rules,
+  posted WM_DROPFILES and minimum button bounds. 32-bit run also used the
+  genuine package on synthetic destination folders.
+- Real Windows window inspected with synthetic local and no-folder rows.
+- `build_portable.bat`: **both 1.3.1 EXEs built**. Both frozen EXEs then
+  discovered tills from a synthetic INI at startup, reporting configured and
+  usable counts. INI unchanged; no file copies performed in that smoke check.
+- Live INI read-only parse/plan verification passed; hash unchanged. Public
+  tests use only synthetic shop/terminal values.
+- `git diff --check`: passed. The browser code did not change; its actual
+  synthetic download/cleanup tests passed on both architectures in 1.3.0 and
+  were not rerun this turn.
 
 ### NOT verified yet
 
-- Actual authenticated Vector-site download with the installer's credentials.
-  The end-to-end browser test uses a synthetic local package.
+- Backups/copies on real tills, live file locking, Vector's subsequent upgrade.
+- Actual authenticated Vector-site download with installer credentials.
 - Real Explorer drag (only posted drop messages checked).
-- Copies/backups on real till shares, live database file availability/locking,
-  or Vector's own subsequent upgrade. No real shop/till was touched.
-- Chrome fallback or machines with browser policies blocking custom profiles,
-  downloads or the local browser endpoint. Manual ZIP browsing/drop remains.
-- Actual VNC viewer shortcut launching. EXEs remain unsigned.
+- Chrome fallback, restrictive browser policies and actual VNC shortcut launch.
+- EXEs remain unsigned. Build/startup verification is not a real-till upgrade.
 
 ### Exact next step
 
-Installer: run `dist\VectorUp-1.3.0-win64.exe` (win32 on a 32-bit PC), use
-**Get package**, enter the Vector login and select the upgrade ZIP. Check that
-its BO/POS versions appear automatically. Manually back up BO; close Vector
-on ONE test till, upgrade that till and check the two files in **Open POS
-backups**, then check Vector upgrades itself. Record those live results here.
-Publish v1.3.0 with the two EXEs and SHA-256 notes when a release is requested.
+Close the older upgrader and run `dist\VectorUp-1.3.1-win64.exe` (win32 on a
+32-bit PC), keeping the shop pointed at its BO folder containing the INI.
+Press Refresh tills: local tills should now appear. No INI edits are needed
+for a valid local location. After manual BO backup and closing Vector on ONE
+test till, check the planned destination, upgrade it and verify local POS
+backups and Vector's own next-start upgrade. Record those live results here.
+Publish EXEs with SHA-256 notes when a release is requested.
 
 ## Handoff log
 
+- **2026-10-08 - Codex (GPT-6), 1.3.1:** fixed tills hidden by UNC-only filtering;
+  local BO/till folders now supported, missing folders visible and unselectable,
+  remote drive paths guarded. GUI check now exercises real synthetic INIs.
+  Both architectures: 64 unit tests including genuine package, GUI checks,
+  builds and frozen discovery smoke checks passed. Synthetic UI inspected.
+  Supplied live INI parsed/planned read-only and stayed unchanged; no live copy
+  or backup. Updated shared rules/docs. Next: run 1.3.1, refresh tills, then
+  verify ONE closed test till's backup/copy/Vector upgrade. No release published.
 - **2026-10-08 - Codex (GPT-6):** user requested push/commit. Fetched origin
   and confirmed the clean local master matched origin/master, including the
   1.3.0 implementation commit `7628b6d`. Updated this handoff confirmation;

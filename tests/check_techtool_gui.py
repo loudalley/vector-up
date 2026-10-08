@@ -89,23 +89,19 @@ def main():
             (d / "postrans.dat").write_text("synthetic transactions")
             (d / "posdebtor.dat").write_text("synthetic debtors")
             t.append({"number": n, "name": f"TILL {n}", "share": str(d)})
+        (bo / "VectorTerminals.ini").write_text(
+            "\n".join(f"[TERMINAL {n}]\nName=TILL {n}\nEnabled=True\nTerminalLocation={d['share']}"
+                        for n, d in enumerate(t, 1)) +
+            "\n[TERMINAL 3]\nName=TILL 3\nEnabled=False\nTerminalLocation=\n",
+            encoding="utf-8")
         tills[store._norm(str(bo))] = t
         cfg["shops"].append(store.new_shop(f"Shop {i}", str(bo)))
     store.save(cfg)
 
-    def fake_read(path):
-        return {"available": True, "_p": store._norm(path)}
-
-    def fake_for_push(info, want=None):
-        ts = tills.get(info.get("_p"), [])
-        return [t for t in ts if want is None or t["number"] in want]
-
     def has(p):
         return (Path(p) / "_UpgradeRequired").is_file()
 
-    with patch("techtool.gui.vector_terminals.read_terminals", fake_read), \
-            patch("techtool.gui.tillops.tills_for_push", fake_for_push), \
-            patch.object(messagebox, "askyesno", lambda *a, **k: True), \
+    with patch.object(messagebox, "askyesno", lambda *a, **k: True), \
             patch.object(messagebox, "showinfo", lambda *a, **k: None), \
             patch.object(messagebox, "showwarning", lambda *a, **k: None):
         app = gui.App()
@@ -114,7 +110,14 @@ def main():
         app.update()
         assert app.dnd._hwnd, "drop target was not installed"
         rows = [i for i in app.tree.get_children()]
-        assert len(rows) == 3 and len(app.tree.get_children(rows[0])) == 3
+        assert len(rows) == 3 and len(app.tree.get_children(rows[0])) == 4
+
+        assert app.tree.set("0:t3", "status") == "No till folder"
+        assert not app._ticked(0, "t3")
+        app._toggle_tick("0:t3")
+        assert not app._ticked(0, "t3")
+        assert len(app._selection("ticked")) == 3
+        print("Real INI discovery: local tills shown; missing folders visible and unselectable: OK")
 
         # --- real checkbox hit testing, keyboard toggle and mixed shop state
         iid = "0:t1"

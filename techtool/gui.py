@@ -134,6 +134,7 @@ class App(tk.Tk):
         self.busy = False
         self.cancel_flag = False
         self.tills = {}    # normalised bo_path -> [till dicts] or None (no INI)
+        self.till_errors = {}
         self.status = {}   # row key -> (state, text)
 
         self._build()
@@ -191,10 +192,11 @@ class App(tk.Tk):
     def _checkbox_images(self):
         size = max(16, round(self.winfo_fpixels("1i") * 18 / 96))
         images = {}
-        for state in ("none", "some", "all"):
+        for state in ("none", "some", "all", "disabled"):
             im = tk.PhotoImage(master=self, width=size + 8, height=size)
-            im.put(GREY if state == "none" else GREEN, to=(0, 0, size, size))
-            im.put(WHITE if state == "none" else GREEN, to=(1, 1, size-1, size-1))
+            border = DISABLED if state == "disabled" else (GREY if state == "none" else GREEN)
+            im.put(border, to=(0, 0, size, size))
+            im.put(WHITE if state in ("none", "disabled") else GREEN, to=(1, 1, size-1, size-1))
             if state == "some":
                 im.put(DARK, to=(size//4, size//2-1, size*3//4, size//2+2))
             elif state == "all":
@@ -370,14 +372,23 @@ class App(tk.Tk):
         rows = [("bo", "Back office", s["bo_path"])]
         for t in self.tills.get(store._norm(s["bo_path"])) or []:
             rows.append((f"t{t['number']}", t.get("name") or
-                         f"Terminal {t['number']}", t["share"]))
+                         f"Terminal {t['number']}", t.get("share") or t.get("location") or ""))
         return rows
 
+    def _till(self, i, sub):
+        if sub == "bo":
+            return None
+        return next((t for t in self.tills.get(store._norm(self.cfg["shops"][i]["bo_path"])) or []
+                     if sub == f"t{t['number']}"), None)
+
+    def _selectable(self, i, sub):
+        return sub == "bo" or bool((self._till(i, sub) or {}).get("share"))
+
     def _ticked(self, i, sub):
-        return sub not in self.cfg["shops"][i].get("off", [])
+        return self._selectable(i, sub) and sub not in self.cfg["shops"][i].get("off", [])
 
     def _shop_state(self, i):
-        kids = [k for k, _l, _p in self._children(i)]
+        kids = [k for k, _l, _p in self._children(i) if self._selectable(i, k)]
         on = sum(1 for k in kids if self._ticked(i, k))
         return "all" if on == len(kids) else ("none" if on == 0 else "some")
 
@@ -407,15 +418,20 @@ class App(tk.Tk):
     def _insert_row(self, i, sub, label, folder):
         key = f"{i}:{sub}"
         state, text = self.status.get(key, ("", ""))
+        if not state:
+            text = ((self._till(i, sub) or {}).get("problem") or "")
+            if sub == "bo":
+                text = self.till_errors.get(store._norm(self.cfg["shops"][i]["bo_path"]), "")
         tag = ("ok",) if state == "ok" else (("bad",) if state else ())
         glyph = {"ok": "✔ ", "partial": "✖ ", "unreachable": "✖ "}.get(state, "")
         self.tree.insert(
             f"s{i}", "end", iid=key, text=label, tags=tag,
-            image=self.check_images["all" if self._ticked(i, sub) else "none"],
-            values=(glyph + text if state else "", folder))
+            image=self.check_images[("all" if self._ticked(i, sub) else "none")
+                                    if self._selectable(i, sub) else "disabled"],
+            values=(glyph + text, folder))
 
     def _shop_status(self, i):
-        kids = self._children(i)
+        kids = [(k, l, p) for k, l, p in self._children(i) if self._selectable(i, k)]
         done = sum(1 for k, _l, _p in kids
                    if self.status.get(f"{i}:{k}", ("",))[0] == "ok")
         bad = sum(1 for k, _l, _p in kids
@@ -457,6 +473,8 @@ class App(tk.Tk):
         else:
             i, sub = iid.split(":")
             i = int(i)
+            if not self._selectable(i, sub):
+                return "break"
             off = set(self.cfg["shops"][i].get("off", []))
             off.symmetric_difference_update({sub})
             self.cfg["shops"][i]["off"] = sorted(off)
@@ -572,9 +590,16 @@ class App(tk.Tk):
             key = store._norm(s["bo_path"])
             info = vector_terminals.read_terminals(s["bo_path"]) \
                 if s["bo_path"] else {"available": False}
-            tills = tillops.tills_for_push(info) if info.get("available") \
+            tills = tillops.tills_for_display(info) if info.get("available") \
                 else None
-            self.q.put(("tills", key, tills))
+            error = info.get("error") or ""
+            self.q.put(("tills", key, tills, error))
+            if error:
+                self.q.put(("log", f"{s['name']}: {error}"))
+            else:
+                usable = sum(1 for t in tills or [] if t.get("share"))
+                self.q.put(("log", f"{s['name']}: {len(tills or [])} configured till(s), "
+                            f"{usable} with a usable folder."))
 
         def work():
             # An unreachable server can hold a read for a long time; do the
@@ -674,7 +699,7 @@ class App(tk.Tk):
         for i, s in enumerate(self.cfg["shops"]):
             d = dict(s, _idx=i, want_bo=True, want_tills=None)
             known = {t["number"] for t in
-                     (self.tills.get(store._norm(s["bo_path"])) or [])}
+                     (self.tills.get(store._norm(s["bo_path"])) or []) if t.get("share")}
             off = set(s.get("off", []))
             if mode == "all":
                 pass
@@ -693,6 +718,8 @@ class App(tk.Tk):
                     if int(si) != i:
                         continue
                     d["want_bo"] = sub == "bo"
+                    if not self._selectable(i, sub):
+                        continue
                     d["want_tills"] = {int(sub[1:])} if sub != "bo" else set()
             if d["want_bo"] or d["want_tills"] is None or d["want_tills"]:
                 out.append(d)
@@ -705,6 +732,13 @@ class App(tk.Tk):
             messagebox.showinfo(APP_TITLE, "Click a till, a back office or a "
                                            "shop in the list first.")
             return None
+        if mode == "row" and ":" in self._selected_key():
+            i, sub = self._selected_key().split(":")
+            if not self._selectable(int(i), sub):
+                messagebox.showinfo(APP_TITLE, "This till has no usable copy folder. "
+                                   "Check its TerminalLocation in VectorTerminals.ini. "
+                                   "For a remote shop, use a UNC network share.")
+                return None
         shops = self._selection(mode)
         if not shops:
             messagebox.showinfo(APP_TITLE, "Nothing is ticked.")
@@ -728,7 +762,7 @@ class App(tk.Tk):
         tills = 0
         if self.pkg.pos:
             for s in shops:
-                known = self.tills.get(store._norm(s["bo_path"])) or []
+                known = [t for t in self.tills.get(store._norm(s["bo_path"])) or [] if t.get("share")]
                 w = s["want_tills"]
                 tills += len([t for t in known
                               if w is None or t["number"] in w])
@@ -885,6 +919,7 @@ class App(tk.Tk):
                     self._row_status(m[1], m[2], m[3])
                 elif kind == "tills":
                     self.tills[m[1]] = m[2]
+                    self.till_errors[m[1]] = m[3]
                 elif kind == "tills_done":
                     self._fill_tree(keep=self._selected_key())
                 elif kind == "download":

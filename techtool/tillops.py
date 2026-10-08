@@ -127,9 +127,28 @@ def tills_with_host(info):
     return out
 
 
+def tills_for_display(info):
+    """Keep configured tills visible even when their location cannot be copied."""
+    out = []
+    for terminal in vector_terminals.configured_tills(info):
+        row = dict(terminal)
+        location = row.get("location") or ""
+        row["share"] = vector_terminals.copy_location(location, info.get("data_path"))
+        row["problem"] = ""
+        if not row["share"]:
+            if not location.strip():
+                row["problem"] = "No till folder"
+            elif len(location) > 1 and location[1] == ":":
+                row["problem"] = "Remote till needs UNC"
+            else:
+                row["problem"] = "No usable till folder"
+        out.append(row)
+    return out
+
+
 def tills_for_push(info, till_numbers=None):
-    """Tills with a share, optionally limited to selected terminal numbers."""
-    tills = [t for t in tills_with_host(info or {}) if t.get("share")]
+    """Tills with a safe copy folder, optionally limited to terminal numbers."""
+    tills = [t for t in tills_for_display(info or {}) if t.get("share")]
     if till_numbers is None:
         return tills
     want = set()
