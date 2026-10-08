@@ -13,15 +13,49 @@ path must not turn into a stray folder, and a dead till must not cost one
 network timeout per file.
 """
 import datetime
+import hashlib
 import os
+import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 
 from . import terminals as vector_terminals
-from . import tillops
+from . import tillops, store
 
 POS, BO = "POS", "BO"
-BACKUP_FOLDER = "_koenekt_backup"
+POS_DATA_FILES = ("postrans.dat", "posdebtor.dat")
+
+
+def _folder_name(value):
+    """A readable Windows folder component, even for imported shop names."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(" .")[:70]
+    name = name or "Unnamed"
+    if name.split(".")[0].upper() in {
+            "CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1, 10)],
+            *[f"LPT{i}" for i in range(1, 10)]}:
+        name = "_" + name
+    return name
+
+
+def backup_pos_data(target, root, stamp):
+    """Read only the two till databases; save them away from the live till.
+
+    Both must be saved before upgrading. Existing backups are never reused.
+    A destination fingerprint keeps equally named tills/shops separate.
+    """
+    dest = target["dest"]
+    fingerprint = hashlib.sha256(os.path.normpath(dest).lower().encode()).hexdigest()[:8]
+    till = target["key"].split(":")[-1]
+    folder = os.path.join(root, _folder_name(target["shop"]),
+                          _folder_name(f"{_folder_name(target['label'])[:40]} - {till} - {fingerprint}"),
+                          _folder_name(stamp))
+    missing = [n for n in POS_DATA_FILES if not os.path.isfile(os.path.join(dest, n))]
+    if missing:
+        raise OSError("Till data backup: missing " + ", ".join(missing))
+    os.makedirs(folder, exist_ok=False)
+    for name in POS_DATA_FILES:
+        shutil.copy2(os.path.join(dest, name), os.path.join(folder, name))
+    return folder
 
 
 def target_key(shop, kind, till=None):
@@ -89,40 +123,22 @@ def check_reachable(targets, workers=8):
     return targets
 
 
-def copy_payload(payload, dest, backup=True, progress=None, done_base=0,
-                 done_total=1, stamp=None):
+def copy_payload(payload, dest, progress=None, done_base=0, done_total=1):
     """Copy one payload into dest. Never deletes anything at dest.
 
-    1. If backup: every file about to be replaced is first copied to
-       dest\\_koenekt_backup\\<stamp>\\ . If that fails nothing is copied.
-    2. All files except the _UpgradeRequired marker.
-    3. The marker, only if every other file arrived - it is what tells Vector
+    1. All files except the _UpgradeRequired marker.
+    2. The marker, only if every other file arrived - it is what tells Vector
        to start upgrading, and it must not fire on a half-copied folder.
 
-    Returns {copied, failed, backed_up, marker_withheld, backup_dir}.
+    Returns {copied, failed, marker_withheld}.
     """
     files = payload.files()
     markers = set(payload.marker_files())
-    out = {"copied": 0, "failed": [], "backed_up": 0,
-           "marker_withheld": False, "backup_dir": None}
-    stamp = stamp or datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-
-    if backup:
-        existing = [f for f in files if os.path.isfile(os.path.join(dest, f))]
-        if existing:
-            bdir = os.path.join(dest, BACKUP_FOLDER, stamp)
-            try:
-                for rel in existing:
-                    tgt = os.path.join(bdir, rel)
-                    os.makedirs(os.path.dirname(tgt), exist_ok=True)
-                    shutil.copy2(os.path.join(dest, rel), tgt)
-                    out["backed_up"] += 1
-                out["backup_dir"] = bdir
-            except OSError as e:
-                out["failed"].append(
-                    f"backup of {rel} failed ({e}) - nothing was copied")
-                out["marker_withheld"] = bool(markers)
-                return out
+    out = {"copied": 0, "failed": [], "marker_withheld": False}
+    if not os.path.isdir(dest):
+        out["failed"].append("destination not reachable - nothing was copied")
+        out["marker_withheld"] = bool(markers)
+        return out
 
     order = [f for f in files if f not in markers] + \
             [f for f in files if f in markers]
@@ -144,7 +160,7 @@ def copy_payload(payload, dest, backup=True, progress=None, done_base=0,
 
 
 def run_upgrade(targets, bo_payload, pos_payload, emit, cancel=None,
-                backup=True):
+                backup_root=None):
     """Copy the package to every target.
 
     emit(kind, *args):
@@ -160,7 +176,7 @@ def run_upgrade(targets, bo_payload, pos_payload, emit, cancel=None,
                "failed": [], "cancelled": False, "targets": len(todo),
                "withheld": 0, "backed_up": 0}
     done = 0
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 
     emit("log", f"Checking {len(todo)} destination(s)...")
     check_reachable(todo)
@@ -182,13 +198,19 @@ def run_upgrade(targets, bo_payload, pos_payload, emit, cancel=None,
             emit("progress", min(99, int(100 * done / total)), head)
             continue
         emit("progress", min(99, int(100 * done / total)), head)
-        r = copy_payload(
-            payload, t["dest"], backup=backup, done_base=done,
-            done_total=total, stamp=stamp,
-            progress=lambda pct, _txt, _h=head: emit("progress", pct, _h))
+        try:
+            if t["kind"] == POS:
+                folder = backup_pos_data(t, backup_root or store.pos_backup_dir(), stamp)
+                summary["backed_up"] += len(POS_DATA_FILES)
+                emit("log", f"SAVED    {head}  - postrans.dat + posdebtor.dat -> {folder}")
+            r = copy_payload(
+                payload, t["dest"], done_base=done, done_total=total,
+                progress=lambda pct, _txt, _h=head: emit("progress", pct, _h))
+        except OSError as e:
+            r = {"copied": 0, "failed": [f"{e} - nothing was copied"],
+                 "marker_withheld": bool(payload.marker_files())}
         done += n
         summary["copied"] += r["copied"]
-        summary["backed_up"] += r["backed_up"]
         if r["failed"]:
             summary["failed_targets"] += 1
             summary["failed"].extend(f"{head}: {f}" for f in r["failed"])
@@ -203,10 +225,7 @@ def run_upgrade(targets, bo_payload, pos_payload, emit, cancel=None,
             emit("target", t["key"], "partial", "failed")
         else:
             summary["ok"] += 1
-            extra = (f", {r['backed_up']} old file(s) saved to "
-                     f"{os.path.relpath(r['backup_dir'], t['dest'])}"
-                     if r["backed_up"] else "")
-            emit("log", f"OK       {head}  - {r['copied']} file(s){extra}")
+            emit("log", f"OK       {head}  - {r['copied']} file(s)")
             emit("target", t["key"], "ok", payload.label())
     emit("progress", 100, "Done")
     return summary

@@ -6,67 +6,95 @@ push, and tell the user.
 
 ## Current state
 
-- **Version:** 1.2.0 (released as `v1.2.0`, win32 + win64 portable exes on
-  GitHub Releases: https://github.com/loudalley/vector-up/releases/tag/v1.2.0)
-- **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`
-- **Local:** `C:\Projects\koenekt-upgrade-tool`
-- **Origin:** split out of the Koenekt Reporter's Terminals-tab upgrade
-  (`C:\Projects\koenekt-daily-report`, private) on 2026-10-08. The till/INI
-  helpers are vendored here; if the Reporter's copy/skip rules change, mirror
-  them.
+- **Date / assistant:** 2026-10-08, Codex (GPT-6).
+- **Version:** 1.3.0. Both portable EXEs built locally in `dist/`; no 1.3.0
+  GitHub release published in this turn. Published release remains v1.2.0.
+- **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
+- **Local:** `C:\Projects\koenekt-upgrade-tool`.
+- **Origin:** extracted from the private Koenekt Reporter; till helpers are
+  vendored here. The sister project was not edited.
 
-### What works (tested)
+### What changed and why
 
-- Package: drop Vector's zip (`BO\`, `POS\`, `Utilities\`, notes); BO/POS
-  sorted, only the outer zip opened. Tested against a real package
-  (`Vector_BO_2_24_0005b_POS_2_14_0003g_TEST.zip`) and generated ones.
-- Upgrade one till / one back office / one shop / ticked / ALL; 20-shop runs on
-  local folders; marker `_UpgradeRequired` last and withheld on failure; backup
-  of replaced files; unreachable targets skipped; Stop; Check (dry run).
-- Portable single-file exes, 64-bit and 32-bit (PyInstaller); both start and
-  unpack the real package; settings beside the exe.
-- `tests/test_techtool.py` 46 tests; `tests/check_techtool_gui.py` drives the
-  real window with real `WM_DROPFILES` messages.
+- User requested nicer theming, fonts and tickboxes. Shared font/colour roles,
+  consistent ttk controls, matching raster checkbox indicators in the tree
+  and settings, clear mixed shop selection, Space to toggle, roomier rows,
+  simpler shop toolbar, high-contrast drop-zone text, and compact package
+  versions keep the destination list usable after a package is loaded.
+- Removed replaced-file backups and their switch. BO backups are manual.
+  Before a POS copy, ONLY `postrans.dat` and `posdebtor.dat` are read from the
+  till and saved beside the portable EXE under
+  `VectorUp_data\POS backups\<shop>\<till - number - identifier>\<timestamp>\`.
+  Source mode/read-only EXE folders use the settings fallback. Both files must
+  exist and be copied successfully or that till receives no upgrade files;
+  other targets continue. Live databases are never modified. An **Open POS
+  backups** button opens the local folder. AGENTS.md now reflects the user's
+  revised policy; thin Claude/Cursor entry points remain unchanged.
+- **Get package** in the drop zone opens Vector's login URL in a small Edge
+  app window (Chrome fallback). Installer enters credentials directly there.
+  A temporary separate browser profile disables password saving and optional
+  browser extensions. Finished session ZIPs import automatically through the
+  Tk queue; partial downloads are ignored. Browser lifetime uses its private
+  loopback endpoint because Edge's launcher can exit while the window remains
+  open. Closing Vector-Up closes that session and removes temporary files.
+  No extra Python dependencies; installed Edge/Chrome required for this button.
+- Package replacements stage into separate temp folders, so an invalid ZIP
+  cannot erase the previous loaded package. Direct `.dat` payload files are
+  excluded. Upgrade marker remains last/withheld on failure. Editing and
+  package controls are disabled while copying or loading.
 
-### NOT verified yet (do not claim otherwise)
+### Tests actually run (this version)
 
-- A real drag from Windows Explorer (only posted messages were tested).
-- A copy to real tills / a real back office, and whether Vector then actually
-  upgrades itself from the copied files.
-- Whether Vector ignores the `_koenekt_backup` folder inside a live back-office
-  data folder.
-- VNC shortcut creation beyond a fake writer (needs UltraVNC/TightVNC viewer).
-- The exes are unsigned; SmartScreen/antivirus may warn.
+- `python tests/test_techtool.py` and `py -3.14-32 tests/test_techtool.py`:
+  **56 tests passed on each**, including the genuine-package test with
+  `KUT_REAL_ZIP`. Initial runs skipped that optional test; final runs did not.
+- `tests/check_techtool_gui.py` on 64-bit and 32-bit Python: **passed**. Real
+  posted WM_DROPFILES, per-row/ticked/ALL copying, mouse checkbox hit testing,
+  keyboard toggling/mixed selection, minimum-size button bounds, local POS
+  snapshots and no automatic BO backups. Uses synthetic shop/till data.
+- `tests/check_vector_download.py` on both architectures: **passed**. Actual
+  Edge app window downloads a synthetic ZIP from a local fixture; Vector-Up
+  imports it and displays package-ready state. Browser/profile cleanup passed.
+  An initial launcher-lifetime failure was fixed before these final checks.
+- Real Windows UI inspected with synthetic destinations at normal and minimum
+  size, including the DPI-aware path. Fonts, checkbox states and spacing viewed.
+- `build_portable.bat`: **both 1.3.0 EXEs built**. Each frozen EXE then started,
+  loaded a synthetic package, and used beside-EXE portable storage in an
+  isolated test directory. EXEs remain ignored; no binaries committed.
+- `git diff --check`: passed. Live Vector login URL returns HTTP 401 when
+  unauthenticated, consistent with its authentication challenge.
 
-### Next steps
+### NOT verified yet
 
-1. Implement the UI styling pass after this read-up: centralise font roles and
-   ttk styles in `techtool/gui.py`, align buttons and checkbox visuals, give
-   destination rows more space, and use dark text on the pale drop zone.
-   Preserve the shop all/some/none selection behaviour. Run the GUI check and
-   inspect the real window after changes, including at the minimum size.
-2. Real Explorer drag onto the window, then a copy to ONE test till, then check
-   Vector upgrades itself. Report results here.
+- Actual authenticated Vector-site download with the installer's credentials.
+  The end-to-end browser test uses a synthetic local package.
+- Real Explorer drag (only posted drop messages checked).
+- Copies/backups on real till shares, live database file availability/locking,
+  or Vector's own subsequent upgrade. No real shop/till was touched.
+- Chrome fallback or machines with browser policies blocking custom profiles,
+  downloads or the local browser endpoint. Manual ZIP browsing/drop remains.
+- Actual VNC viewer shortcut launching. EXEs remain unsigned.
 
-### Latest review - 2026-10-08, Codex (GPT-6)
+### Exact next step
 
-- Version remains 1.2.0. User requested a read-up before UI changes; no
-  application code, build or release was changed.
-- Read the shared rules, handoff, README, GUI code and GUI check. Reviewed
-  official Python ttk and Microsoft typography/checkbox documentation.
-- Findings: tree ticks are Unicode text symbols, while settings use ttk
-  Checkbuttons; custom Tk action buttons mix with default ttk controls; fonts
-  and some colours are still inline despite the shared constants.
-- Checks actually run: a hidden Tk runtime probe succeeded (Tk 8.6.15, vista
-  theme, default ttk fonts Segoe UI 9pt). A colour calculation measured green
-  text on the pale drop zone at 1.98:1 and dark text on green at 7.36:1.
-- No unit suite or GUI workflow check run in this documentation-only review.
-  The real application window, clipping, DPI behaviour and real shops/tills
-  were not inspected or tested in this turn. Prior test results above are
-  historical. Exact next step is the UI styling pass in item 1 above.
+Installer: run `dist\VectorUp-1.3.0-win64.exe` (win32 on a 32-bit PC), use
+**Get package**, enter the Vector login and select the upgrade ZIP. Check that
+its BO/POS versions appear automatically. Manually back up BO; close Vector
+on ONE test till, upgrade that till and check the two files in **Open POS
+backups**, then check Vector upgrades itself. Record those live results here.
+Publish v1.3.0 with the two EXEs and SHA-256 notes when a release is requested.
 
 ## Handoff log
 
+- **2026-10-08 - Codex (GPT-6), 1.3.0:** refreshed styling/fonts/checkboxes;
+  replaced upgrade-file backups with mandatory local two-file POS snapshots
+  grouped by shop/till/time; BO backups manual. Added Get package mini browser
+  with automatic completed-ZIP import and temp profile cleanup. Updated shared
+  rules/docs. Both architectures: 56 unit tests including genuine package,
+  GUI checks and real-browser synthetic download check passed; both EXEs built
+  and frozen startup/package/storage smoke checks passed. UI visually inspected.
+  Not tested with actual Vector login or real tills. No release published;
+  next: installer login/download, then one closed test till and verify backups.
 - **2026-10-08 - Codex (GPT-6):** read up on the current UI and official styling
   guidance at the user's request. Recorded mixed Tk/ttk styling, default 9pt
   fonts, Unicode tree tickboxes and low-contrast drop-zone text. Runtime/font

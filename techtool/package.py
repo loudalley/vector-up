@@ -14,6 +14,7 @@ BO\\ files go to back offices, POS\\ files to tills.
 """
 import os
 import shutil
+import tempfile
 
 from . import tillops
 
@@ -37,7 +38,8 @@ class Payload:
         on a till until everything it needs has arrived.
         """
         if self._files is None:
-            fs = tillops.list_upgrade_files(self.dir)
+            fs = [f for f in tillops.list_upgrade_files(self.dir)
+                  if not f.lower().endswith(".dat")]
             fs.sort(key=lambda r: (
                 os.path.basename(r).lower().startswith(MARKER_PREFIX),
                 r.lower()))
@@ -117,19 +119,18 @@ def load(path, scratch, progress=None):
     path = os.path.normpath(path)
     name = os.path.basename(path)
     if os.path.isdir(path):
-        src = os.path.join(scratch, "pkg")
-        _fresh(src)
+        src = tempfile.mkdtemp(prefix="pkg-", dir=scratch)
         if progress:
             progress(10, f"Reading {name}")
         shutil.copytree(path, src, dirs_exist_ok=True)
     elif path.lower().endswith(".zip") and os.path.isfile(path):
-        src = os.path.join(scratch, "pkg")
-        _fresh(src)
+        src = tempfile.mkdtemp(prefix="pkg-", dir=scratch)
         if progress:
             progress(10, f"Extracting {name}")
         try:
             tillops._safe_extract_zip(path, src)
         except Exception as e:  # BadZipFile, truncated download, ...
+            shutil.rmtree(src, ignore_errors=True)
             raise ValueError(f"Could not open {name}: {e}")
     else:
         raise ValueError(
@@ -138,16 +139,12 @@ def load(path, scratch, progress=None):
     root, bo, pos, ignored = find_roles(src)
     if not (bo or pos):
         seen = ", ".join(sorted(os.listdir(src))[:8]) or "nothing"
+        shutil.rmtree(src, ignore_errors=True)
         raise ValueError(
             f"{name} has no BO or POS folder (found: {seen}).")
     if progress:
         progress(100, "Package ready")
     return Package(name, root, bo, pos, ignored)
-
-
-def _fresh(d):
-    shutil.rmtree(d, ignore_errors=True)
-    os.makedirs(d, exist_ok=True)
 
 
 def human_size(n):

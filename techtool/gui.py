@@ -9,12 +9,12 @@ import os
 import queue
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk, font as tkfont
 
 from . import terminals as vector_terminals
 from . import tillops
 
-from . import APP_TITLE, VERSION, dnd, engine, package, store
+from . import APP_TITLE, VERSION, dnd, downloads, engine, package, store
 
 GREEN = "#73C509"
 DARK = "#17251F"
@@ -22,7 +22,18 @@ GREY = "#596A60"
 LIGHT = "#F3F6F1"
 RED = "#C0392B"
 FONT = ("Segoe UI", 10)
-CHECK = {"all": "☑", "some": "▣", "none": "☐"}
+WHITE = "#FFFFFF"
+BORDER = "#DCE4DC"
+HOVER = "#E7EFE3"
+SELECT = "#E2F0D5"
+DISABLED = "#A0AAA2"
+SUCCESS = "#2E7D32"
+FONT_SMALL = ("Segoe UI", 9)
+FONT_STRONG = ("Segoe UI Semibold", 10)
+FONT_SECTION = ("Segoe UI Semibold", 12)
+FONT_TITLE = ("Segoe UI Semibold", 17)
+FONT_PACKAGE = ("Segoe UI Semibold", 14)
+FONT_LOG = ("Consolas", 9)
 
 
 def _resource(name):
@@ -43,14 +54,14 @@ class ShopDialog(tk.Toplevel):
         self.title("Shop")
         self.transient(parent)
         self.resizable(False, False)
-        self.configure(bg="white", padx=16, pady=14)
+        self.configure(bg=WHITE, padx=16, pady=14)
         self.result = None
         self.name = tk.StringVar(value=shop.get("name", ""))
         self.path = tk.StringVar(value=shop.get("bo_path", ""))
         self.vnc = tk.StringVar(value=shop.get("vnc_password", ""))
 
         def row(r, text, var, width=48, browse=False, hint=None):
-            tk.Label(self, text=text, bg="white", fg=DARK, font=FONT).grid(
+            tk.Label(self, text=text, bg=WHITE, fg=DARK, font=FONT).grid(
                 row=r, column=0, sticky="w", pady=4)
             e = ttk.Entry(self, textvariable=var, width=width)
             e.grid(row=r, column=1, sticky="we", padx=(8, 0))
@@ -58,8 +69,8 @@ class ShopDialog(tk.Toplevel):
                 ttk.Button(self, text="Browse...", command=self._browse).grid(
                     row=r, column=2, padx=(6, 0))
             if hint:
-                tk.Label(self, text=hint, bg="white", fg=GREY,
-                         font=("Segoe UI", 9), wraplength=420,
+                tk.Label(self, text=hint, bg=WHITE, fg=GREY,
+                         font=FONT_SMALL, wraplength=420,
                          justify="left").grid(row=r + 1, column=1,
                                               columnspan=2, sticky="w")
             return e
@@ -70,7 +81,7 @@ class ShopDialog(tk.Toplevel):
                  "\\\\SERVER\\Ramset. The tills are read from that file.")
         row(4, "Till VNC password", self.vnc, width=16,
             hint=f"Leave blank to use the standard ({default_vnc}).")
-        bar = tk.Frame(self, bg="white")
+        bar = tk.Frame(self, bg=WHITE)
         bar.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right")
         ttk.Button(bar, text="Save", command=self._save).pack(
@@ -105,7 +116,7 @@ class App(tk.Tk):
         self.title(f"{APP_TITLE} {VERSION}")
         self.geometry("1200x820")
         self.minsize(1000, 680)
-        self.configure(bg="white")
+        self.configure(bg=WHITE)
         ico = _resource("app_icon.ico")
         if ico:
             try:
@@ -116,6 +127,9 @@ class App(tk.Tk):
         self.cfg = store.load()
         self.scratch = store.scratch_dir()
         self.pkg = None
+        self.loading = False
+        self.download_session = None
+        self.pending_downloads = []
         self.q = queue.Queue()
         self.busy = False
         self.cancel_flag = False
@@ -136,162 +150,214 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     # ---------------------------------------------------------------- layout
+    def _theme(self):
+        self.option_add("*Font", FONT)
+        for name in ("TkDefaultFont", "TkTextFont", "TkHeadingFont"):
+            tkfont.nametofont(name).configure(family=FONT[0], size=FONT[1])
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure(".", font=FONT, background=WHITE, foreground=DARK)
+        style.configure("TButton", padding=(10, 7), relief="flat",
+                        background=LIGHT, bordercolor=BORDER, focuscolor=GREY)
+        style.map("TButton", background=[("active", HOVER)],
+                  foreground=[("disabled", DISABLED)])
+        style.configure("Primary.TButton", background=GREEN, font=FONT_STRONG,
+                        bordercolor=GREEN, padding=(14, 9))
+        style.map("Primary.TButton", background=[("disabled", LIGHT), ("active", SELECT)])
+        style.configure("Action.TButton", font=FONT_STRONG, padding=(12, 9))
+        style.configure("TEntry", padding=5, fieldbackground=WHITE,
+                        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
+        style.configure("Treeview", background=WHITE, fieldbackground=WHITE,
+                        font=FONT, rowheight=round(self.winfo_fpixels("0.30i")),
+                        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
+        style.map("Treeview", background=[("selected", SELECT)],
+                  foreground=[("selected", DARK)])
+        style.configure("Treeview.Heading", font=FONT_STRONG, background=LIGHT,
+                        foreground=GREY, padding=(10, 9), relief="flat")
+        style.map("Treeview.Heading", background=[("active", HOVER)])
+        style.configure("Horizontal.TProgressbar", background=GREEN,
+                        troughcolor=LIGHT, bordercolor=LIGHT, thickness=5)
+        self.check_images = self._checkbox_images()
+        style.element_create("Koenekt.Check", "image", self.check_images["none"],
+                             ("selected", self.check_images["all"]),
+                             ("alternate", self.check_images["some"]))
+        style.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
+            ("Koenekt.Check", {"side": "left", "sticky": ""}),
+            ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
+                ("Checkbutton.label", {"sticky": "nswe"})]})]})])
+        style.configure("TCheckbutton", padding=(0, 5, 8, 5))
+        style.map("TCheckbutton", background=[("active", WHITE)])
+
+    def _checkbox_images(self):
+        size = max(16, round(self.winfo_fpixels("1i") * 18 / 96))
+        images = {}
+        for state in ("none", "some", "all"):
+            im = tk.PhotoImage(master=self, width=size + 8, height=size)
+            im.put(GREY if state == "none" else GREEN, to=(0, 0, size, size))
+            im.put(WHITE if state == "none" else GREEN, to=(1, 1, size-1, size-1))
+            if state == "some":
+                im.put(DARK, to=(size//4, size//2-1, size*3//4, size//2+2))
+            elif state == "all":
+                # Rasterised check: independent of the machine's symbol fonts.
+                for x in range(size//5, size*4//5):
+                    y = (size//2 + x-size//5 if x < size*2//5 else
+                         size*7//10 - (x-size*2//5))
+                    y = max(2, min(size-3, y))
+                    im.put(DARK, to=(x, y, x+1, y+2))
+            images[state] = im
+        return images
+
     def _build(self):
+        self._theme()
         head = tk.Frame(self, bg=DARK)
         head.pack(fill="x")
-        tk.Label(head, text="VECTOR-UP  by Koenekt", bg=DARK, fg="white",
-                 font=("Segoe UI Semibold", 15)).pack(side="left", padx=16,
-                                                      pady=10)
-        tk.Label(head, text="Free - drop the Vector upgrade package, then "
-                            "upgrade a till, a back office, a shop or all",
-                 bg=DARK, fg=GREEN, font=("Segoe UI", 10)).pack(side="left")
-
-        self.body = tk.Frame(self, bg="white")
-        self.body.pack(fill="both", expand=True, padx=14, pady=12)
+        tk.Label(head, text="VECTOR-UP  by Koenekt", bg=DARK, fg=WHITE,
+                 font=FONT_TITLE).pack(side="left", padx=22, pady=15)
+        tk.Label(head, text="Vector upgrades, shop by shop", bg=DARK,
+                 fg=GREEN, font=FONT).pack(side="left", padx=12)
+        tk.Label(head, text="FREE", bg=DARK, fg=GREEN,
+                 font=FONT_STRONG).pack(side="right", padx=22)
+        self.body = tk.Frame(self, bg=WHITE)
+        self.body.pack(fill="both", expand=True, padx=22, pady=16)
         self.body.columnconfigure(0, weight=1)
-
-        # ---- the one drop zone
-        self.drop = tk.Frame(self.body, bg=LIGHT, highlightthickness=2,
-                             highlightbackground=GREEN)
+        self.drop = tk.Frame(self.body, bg=LIGHT, highlightthickness=1,
+                             highlightbackground=BORDER)
         self.drop.grid(row=0, column=0, sticky="we")
-        self.drop_title = tk.Label(
-            self.drop, text="Drop the upgrade package (.zip) here",
-            bg=LIGHT, fg=GREEN, font=("Segoe UI Semibold", 14))
-        self.drop_title.pack(pady=(12, 2))
-        self.drop_info = tk.Label(
-            self.drop, bg=LIGHT, fg=GREY, font=FONT, justify="center",
-            text="It must hold a BO folder and a POS folder. BO files go to "
-                 "back offices, POS files to tills.")
+        self.drop_title = tk.Label(self.drop,
+            text="Drop your Vector upgrade ZIP here", bg=LIGHT, fg=DARK,
+            font=FONT_PACKAGE)
+        self.drop_title.pack(pady=(16, 4))
+        self.drop_info = tk.Label(self.drop, bg=LIGHT, fg=GREY, font=FONT,
+            justify="center", text="One package. Back-office and till files sorted for you.")
         self.drop_info.pack()
         bar = tk.Frame(self.drop, bg=LIGHT)
-        bar.pack(pady=(8, 12))
-        ttk.Button(bar, text="Browse for zip...",
-                   command=self._browse_zip).pack(side="left")
-        ttk.Button(bar, text="Browse for unzipped folder...",
-                   command=self._browse_folder).pack(side="left", padx=(8, 0))
-        ttk.Button(bar, text="Clear", command=self._clear_pkg).pack(
-            side="left", padx=(8, 0))
-
-        # ---- destinations tree
-        tk.Label(self.body, text="Back offices and tills", bg="white",
-                 fg=DARK, font=("Segoe UI Semibold", 12)).grid(
-            row=1, column=0, sticky="sw", pady=(10, 0))
-        # row 1 holds the heading; the tree gets its own expanding row
-        self.body.rowconfigure(1, weight=0)
+        bar.pack(pady=(12, 16))
+        self.package_btns = []
+        for text, command, sty in (
+                ("Get package", self._get_package, "Primary.TButton"),
+                ("Browse ZIP", self._browse_zip, "TButton"),
+                ("Browse folder", self._browse_folder, "TButton"),
+                ("Clear", self._clear_pkg, "TButton")):
+            button = ttk.Button(bar, text=text, command=command, style=sty)
+            button.pack(side="left", padx=4)
+            self.package_btns.append(button)
+        heading = tk.Frame(self.body, bg=WHITE)
+        heading.grid(row=1, column=0, sticky="we", pady=(18, 8))
+        tk.Label(heading, text="Back offices and tills", bg=WHITE,
+                 fg=DARK, font=FONT_SECTION).pack(side="left")
+        self.count_lbl = tk.Label(heading, bg=WHITE, fg=GREY, font=FONT_SMALL)
+        self.count_lbl.pack(side="right")
         self.body.rowconfigure(2, weight=3)
-        treef = tk.Frame(self.body, bg="white")
-        treef.grid(row=2, column=0, sticky="nsew", pady=(4, 6))
-        self.tree = ttk.Treeview(
-            treef, columns=("sel", "status", "where"),
-            show="tree headings", selectmode="browse", height=10)
-        self.tree.heading("#0", text="Shop / destination")
-        self.tree.heading("sel", text="Tick")
-        self.tree.heading("status", text="Result")
-        self.tree.heading("where", text="Folder")
-        self.tree.column("#0", width=300, stretch=False)
-        self.tree.column("sel", width=50, anchor="center", stretch=False)
-        self.tree.column("status", width=210, stretch=False)
-        self.tree.column("where", width=520, stretch=True)
+        treef = tk.Frame(self.body, bg=WHITE)
+        treef.grid(row=2, column=0, sticky="nsew")
+        self.tree = ttk.Treeview(treef, columns=("status", "where"),
+            show="tree headings", selectmode="browse", height=8)
+        for column, title, width, stretch in (
+                ("#0", "Shop / destination", 300, False),
+                ("status", "Result", 180, False),
+                ("where", "Folder", 450, True)):
+            self.tree.heading(column, text=title, anchor="w")
+            self.tree.column(column, width=width, minwidth=100, stretch=stretch)
         tsb = ttk.Scrollbar(treef, command=self.tree.yview)
-        self.tree.config(yscrollcommand=tsb.set)
+        xsb = ttk.Scrollbar(treef, orient="horizontal", command=self.tree.xview)
+        self.tree.config(yscrollcommand=tsb.set, xscrollcommand=xsb.set)
+        xsb.pack(side="bottom", fill="x")
         tsb.pack(side="right", fill="y")
         self.tree.pack(fill="both", expand=True)
-        self.tree.tag_configure("shop", font=("Segoe UI Semibold", 10))
-        self.tree.tag_configure("ok", foreground="#2E7D32")
+        self.tree.tag_configure("shop", font=FONT_STRONG, background=LIGHT)
+        self.tree.tag_configure("ok", foreground=SUCCESS)
         self.tree.tag_configure("bad", foreground=RED)
         self.tree.bind("<Button-1>", self._tree_click)
+        self.tree.bind("<space>", self._tree_space)
         self.tree.bind("<Double-1>", self._tree_double)
         self.tree.bind("<Button-3>", self._tree_menu)
         self.menu = tk.Menu(self, tearoff=0)
-
-        shopbar = tk.Frame(self.body, bg="white")
-        shopbar.grid(row=3, column=0, sticky="we")
-        for text, cmd in (("Add shop", self._add_shop),
-                          ("Edit", self._edit_shop),
-                          ("Remove", self._remove_shop),
-                          ("Tick all", lambda: self._tick_all(True)),
-                          ("Tick none", lambda: self._tick_all(False)),
-                          ("Expand", lambda: self._expand(True)),
-                          ("Collapse", lambda: self._expand(False)),
-                          ("Refresh tills", self._refresh_tills),
-                          ("Import shops from Reporter", self._import)):
-            ttk.Button(shopbar, text=text, command=cmd).pack(
-                side="left", padx=(0, 4))
-        self.count_lbl = tk.Label(shopbar, text="", bg="white", fg=GREY,
-                                  font=("Segoe UI", 9))
-        self.count_lbl.pack(side="right")
-
-        # ---- actions
-        acts = tk.Frame(self.body, bg="white")
-        acts.grid(row=4, column=0, sticky="we", pady=(10, 4))
+        shopbar = tk.Frame(self.body, bg=WHITE)
+        shopbar.grid(row=3, column=0, sticky="we", pady=(8, 14))
+        for text, cmd in (("Add shop", self._add_shop), ("Edit", self._edit_shop),
+                          ("Remove", self._remove_shop), ("Refresh tills", self._refresh_tills)):
+            ttk.Button(shopbar, text=text, command=cmd).pack(side="left", padx=(0, 6))
+        more = ttk.Menubutton(shopbar, text="More")
+        menu = tk.Menu(more, tearoff=0)
+        menu.add_command(label="Expand shops", command=lambda: self._expand(True))
+        menu.add_command(label="Collapse shops", command=lambda: self._expand(False))
+        menu.add_separator()
+        menu.add_command(label="Import shops from Reporter", command=self._import)
+        more.config(menu=menu)
+        more.pack(side="right", padx=(6, 0))
+        ttk.Button(shopbar, text="Tick none", command=lambda: self._tick_all(False)).pack(side="right", padx=6)
+        ttk.Button(shopbar, text="Tick all", command=lambda: self._tick_all(True)).pack(side="right")
+        acts = tk.Frame(self.body, bg=WHITE)
+        acts.grid(row=4, column=0, sticky="we")
         self.btns = []
-
-        def big(text, cmd, primary=False):
-            b = tk.Button(
-                acts, text=text, command=cmd, relief="flat", padx=14, pady=6,
-                bg=GREEN if primary else "#E3E8E1", fg=DARK,
-                font=("Segoe UI Semibold", 10))
-            b.pack(side="left", padx=(0, 8))
-            self.btns.append(b)
-            return b
-
-        big("Upgrade ticked", lambda: self._upgrade("ticked"), True)
-        big("Upgrade selected row", lambda: self._upgrade("row"))
-        big("Upgrade ALL", lambda: self._upgrade("all"))
-        big("Check (copy nothing)", self._check)
-        big("Create VNC shortcuts", self._vnc)
-        self.stop_btn = ttk.Button(acts, text="Stop", command=self._stop,
-                                   state="disabled")
+        for text, cmd, primary in (
+                ("Upgrade ticked", lambda: self._upgrade("ticked"), True),
+                ("Upgrade selected row", lambda: self._upgrade("row"), False),
+                ("Upgrade ALL", lambda: self._upgrade("all"), False),
+                ("Check destinations", self._check, False)):
+            button = ttk.Button(acts, text=text, command=cmd,
+                                style="Primary.TButton" if primary else "Action.TButton")
+            button.pack(side="left", padx=(0, 8))
+            self.btns.append(button)
+        self.stop_btn = ttk.Button(acts, text="Stop", command=self._stop, state="disabled")
         self.stop_btn.pack(side="right")
-
-        opts = tk.Frame(self.body, bg="white")
-        opts.grid(row=5, column=0, sticky="w", pady=(0, 6))
-        self.backup_var = tk.BooleanVar(value=self.cfg["backup"])
-        ttk.Checkbutton(
-            opts, text="Back up the files being replaced first",
-            variable=self.backup_var, command=self._save_cfg).pack(
-            side="left")
-        tk.Label(opts, text="   Standard till VNC password", bg="white",
-                 fg=DARK, font=("Segoe UI", 9)).pack(side="left")
+        policy = tk.Frame(self.body, bg=WHITE)
+        policy.grid(row=5, column=0, sticky="we", pady=(10, 8))
+        tk.Label(policy, text="Till data saved first: postrans.dat + posdebtor.dat",
+                 bg=WHITE, fg=GREY, font=FONT_SMALL).pack(side="left")
+        ttk.Button(policy, text="Open POS backups", command=self._open_backups).pack(side="right")
+        tk.Label(policy, text="Back-office backup: manual", bg=WHITE,
+                 fg=GREY, font=FONT_SMALL).pack(side="right", padx=14)
+        opts = tk.Frame(self.body, bg=WHITE)
+        opts.grid(row=6, column=0, sticky="we", pady=(0, 10))
+        vnc = ttk.Button(opts, text="VNC shortcuts", command=self._vnc)
+        vnc.pack(side="left", padx=(0, 14))
+        self.btns.append(vnc)
+        tk.Label(opts, text="Till VNC password", bg=WHITE, fg=GREY,
+                 font=FONT_SMALL).pack(side="left")
         self.vnc_var = tk.StringVar(value=self.cfg["vnc_default"])
-        e = ttk.Entry(opts, textvariable=self.vnc_var, width=8)
-        e.pack(side="left", padx=(4, 0))
-        e.bind("<FocusOut>", lambda _e: self._save_cfg())
+        entry = ttk.Entry(opts, textvariable=self.vnc_var, width=8)
+        entry.pack(side="left", padx=(8, 16))
+        entry.bind("<FocusOut>", lambda _e: self._save_cfg())
         self.group_var = tk.BooleanVar(value=self.cfg["group_shortcuts"])
-        ttk.Checkbutton(opts, text="shortcuts in a 'Koenekt Tills' folder",
-                        variable=self.group_var,
-                        command=self._save_cfg).pack(side="left", padx=(10, 0))
-
+        ttk.Checkbutton(opts, text="Group shortcuts in a Koenekt Tills folder",
+            variable=self.group_var, command=self._save_cfg).pack(side="left")
         self.bar = ttk.Progressbar(self.body, maximum=100)
-        self.bar.grid(row=6, column=0, sticky="we")
-        self.body.rowconfigure(5, weight=0)
-        self.body.rowconfigure(6, weight=0)
-        self.body.rowconfigure(7, weight=2)
-        logf = tk.Frame(self.body, bg="white")
-        logf.grid(row=7, column=0, sticky="nsew", pady=(8, 0))
-        self.log = tk.Text(logf, height=7, wrap="word", bg="#FAFAFA",
-                           fg=DARK, relief="solid", bd=1,
-                           font=("Consolas", 9), state="disabled")
+        self.bar.grid(row=7, column=0, sticky="we")
+        self.body.rowconfigure(8, weight=1)
+        logf = tk.Frame(self.body, bg=WHITE)
+        logf.grid(row=8, column=0, sticky="nsew", pady=(10, 0))
+        self.log = tk.Text(logf, height=5, wrap="word", bg=LIGHT, fg=DARK,
+            relief="flat", bd=0, padx=10, pady=8, font=FONT_LOG, state="disabled")
         sb = ttk.Scrollbar(logf, command=self.log.yview)
         self.log.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
+        self.status_lbl = tk.Label(self, text="", bg=WHITE, fg=GREY,
+                                   anchor="w", font=FONT_SMALL)
+        self.status_lbl.pack(fill="x", padx=22, pady=(0, 4))
+        self.operation_controls = []
+        def collect(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, (ttk.Button, ttk.Menubutton, ttk.Entry, ttk.Checkbutton)):
+                    if child is not self.stop_btn:
+                        self.operation_controls.append(child)
+                collect(child)
+        collect(self.body)
 
-        self.status_lbl = tk.Label(self, text="", bg="white", fg=GREY,
-                                   anchor="w", font=("Segoe UI", 9))
-        self.status_lbl.pack(fill="x", padx=14, pady=(0, 2))
-        where = store.data_dir()
-        tk.Label(self, bg="white", fg=GREY, anchor="w", font=("Segoe UI", 8),
-                 text=("Settings travel with the exe: " if store.portable_dir()
-                       else "Settings saved in: ") + where
-                 ).pack(fill="x", padx=14, pady=(0, 6))
+    def _open_backups(self):
+        folder = store.pos_backup_dir()
+        try:
+            os.makedirs(folder, exist_ok=True)
+            os.startfile(folder)
+        except OSError as e:
+            messagebox.showwarning(APP_TITLE, f"Could not open POS backups: {e}")
 
     # ------------------------------------------------------------ settings
     def _save_cfg(self):
         self.cfg["vnc_default"] = (self.vnc_var.get().strip()
                                    or store.DEFAULT_VNC)
         self.cfg["group_shortcuts"] = bool(self.group_var.get())
-        self.cfg["backup"] = bool(self.backup_var.get())
         try:
             store.save(self.cfg)
         except OSError as e:
@@ -325,7 +391,8 @@ class App(tk.Tk):
             self.tree.insert(
                 "", "end", iid=sid, open=first or sid in opened,
                 text=s["name"], tags=("shop",),
-                values=(CHECK[self._shop_state(i)], "", s["bo_path"]))
+                image=self.check_images[self._shop_state(i)],
+                values=("", s["bo_path"]))
             for sub, label, folder in self._children(i):
                 self._insert_row(i, sub, label, folder)
             self._shop_status(i)
@@ -344,8 +411,8 @@ class App(tk.Tk):
         glyph = {"ok": "✔ ", "partial": "✖ ", "unreachable": "✖ "}.get(state, "")
         self.tree.insert(
             f"s{i}", "end", iid=key, text=label, tags=tag,
-            values=(CHECK["all" if self._ticked(i, sub) else "none"],
-                    glyph + text if state else "", folder))
+            image=self.check_images["all" if self._ticked(i, sub) else "none"],
+            values=(glyph + text if state else "", folder))
 
     def _shop_status(self, i):
         kids = self._children(i)
@@ -368,13 +435,20 @@ class App(tk.Tk):
         return sel[0] if sel else None
 
     def _tree_click(self, event):
-        if self.tree.identify_region(event.x, event.y) != "cell":
-            return
-        if self.tree.identify_column(event.x) != "#1":
+        if "image" not in self.tree.identify_element(event.x, event.y):
             return
         iid = self.tree.identify_row(event.y)
-        if not iid:
-            return
+        if iid:
+            return self._toggle_tick(iid)
+
+    def _tree_space(self, _event):
+        iid = self._selected_key()
+        if iid:
+            return self._toggle_tick(iid)
+
+    def _toggle_tick(self, iid):
+        if self.busy or self.loading:
+            return "break"
         if iid.startswith("s"):
             i = int(iid[1:])
             kids = [k for k, _l, _p in self._children(i)]
@@ -393,7 +467,7 @@ class App(tk.Tk):
     def _tree_double(self, event):
         iid = self.tree.identify_row(event.y)
         if iid and iid.startswith("s") and \
-                self.tree.identify_column(event.x) != "#1":
+                "image" not in self.tree.identify_element(event.x, event.y):
             self._edit_shop()
 
     def _tick_all(self, state):
@@ -410,6 +484,8 @@ class App(tk.Tk):
             self.tree.item(iid, open=state)
 
     def _tree_menu(self, event):
+        if self.busy or self.loading:
+            return
         iid = self.tree.identify_row(event.y)
         if not iid:
             return
@@ -451,6 +527,8 @@ class App(tk.Tk):
             self._refresh_tills()
 
     def _edit_shop(self):
+        if self.busy or self.loading:
+            return
         i = self._shop_index()
         if i is None:
             return
@@ -510,14 +588,18 @@ class App(tk.Tk):
 
     # -------------------------------------------------------------- package
     def _dropped(self, paths):
-        if self.busy:
-            return self._log("Busy - wait for the copy to finish.")
+        if self.busy or self.loading:
+            return self._log("Busy - wait for the current operation to finish.")
         if len(paths) > 1:
             self._log(f"{len(paths)} items dropped - using the first "
                       f"({os.path.basename(paths[0])}).")
         self._load_package(paths[0])
 
     def _load_package(self, path):
+        if self.busy or self.loading:
+            return
+        self.loading = True
+        self._set_busy(False)
         self.status_lbl.config(text="Unpacking the package...")
         self.drop_title.config(text="Unpacking...", fg=GREY)
 
@@ -532,6 +614,27 @@ class App(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _get_package(self):
+        if self.busy or self.loading:
+            return
+        if self.download_session:
+            if self.download_session.active:
+                self._log("The Vector download browser is already open. Choose the ZIP there.")
+                return
+            # Keep completed downloads available while pending imports finish.
+            if self.pending_downloads:
+                return
+            self.download_session.close()
+        session = downloads.DownloadSession(lambda *m: self.q.put(m))
+        try:
+            session.start()
+        except OSError as e:
+            messagebox.showwarning(APP_TITLE, str(e))
+            return
+        self.download_session = session
+        self._log("Vector download browser opened. Log in, then choose the upgrade ZIP.")
+        self.status_lbl.config(text="Waiting for your Vector download...")
+
     def _browse_zip(self):
         p = filedialog.askopenfilename(
             title="Upgrade package", filetypes=[("Zip", "*.zip"), ("All", "*")])
@@ -544,7 +647,7 @@ class App(tk.Tk):
             self._dropped([p])
 
     def _clear_pkg(self):
-        if self.busy:
+        if self.busy or self.loading:
             return
         self.pkg = None
         self._show_package()
@@ -552,15 +655,15 @@ class App(tk.Tk):
     def _show_package(self):
         if not self.pkg:
             self.drop_title.config(
-                text="Drop the upgrade package (.zip) here", fg=GREEN)
+                text="Drop your Vector upgrade ZIP here", fg=DARK)
             self.drop_info.config(
-                text="It must hold a BO folder and a POS folder. BO files go "
-                     "to back offices, POS files to tills.", fg=GREY)
-            self.drop.config(highlightbackground=GREEN)
+                text="One package. Back-office and till files sorted for you.", fg=GREY)
+            self.drop.config(highlightbackground=BORDER)
             return
-        self.drop_title.config(text="Package ready - drop another to replace "
-                                    "it", fg=DARK)
-        self.drop_info.config(text=self.pkg.summary(), fg=DARK)
+        self.drop_title.config(text="Package ready to copy", fg=DARK)
+        labels = [f"{title}: {payload.label() if payload else 'not included'}"
+                  for title, payload in (("Back office", self.pkg.bo), ("POS", self.pkg.pos))]
+        self.drop_info.config(text="   |   ".join(labels), fg=DARK)
         self.drop.config(highlightbackground=DARK)
 
     # -------------------------------------------------------------- running
@@ -596,7 +699,7 @@ class App(tk.Tk):
         return out
 
     def _ready(self, mode):
-        if self.busy:
+        if self.busy or self.loading:
             return None
         if mode == "row" and not self._selected_key():
             messagebox.showinfo(APP_TITLE, "Click a till, a back office or a "
@@ -616,8 +719,8 @@ class App(tk.Tk):
 
     def _set_busy(self, busy):
         self.busy = busy
-        for b in self.btns:
-            b.config(state="disabled" if busy else "normal")
+        for b in self.operation_controls:
+            b.config(state="disabled" if busy or self.loading else "normal")
         self.stop_btn.config(state="normal" if busy else "disabled")
 
     def _count(self, shops):
@@ -679,14 +782,14 @@ class App(tk.Tk):
                 "\n\nVector must be CLOSED on those PCs. Files are copied "
                 "over the old ones and Vector upgrades itself the next time "
                 "it starts. Nothing is deleted."
-                + ("\nOld versions of replaced files are saved first."
-                   if self.backup_var.get() else
-                   "\nBackup is OFF - replaced files cannot be restored.")):
+                "\n\nTills: postrans.dat and posdebtor.dat are saved first "
+                "in your local POS backups folder. A failed backup skips that till."
+                "\nBack offices: make your manual backup before continuing."):
             return
         self._set_busy(True)
         self.cancel_flag = False
         self.bar["value"] = 0
-        pkg, backup = self.pkg, bool(self.backup_var.get())
+        pkg, backup_root = self.pkg, store.pos_backup_dir()
         for s in shops:  # fresh results for what is about to run
             for k in list(self.status):
                 if k.startswith(f"{s['_idx']}:"):
@@ -703,7 +806,7 @@ class App(tk.Tk):
             summary = engine.run_upgrade(
                 plan["targets"], pkg.bo, pkg.pos,
                 lambda *a: self.q.put(a), cancel=lambda: self.cancel_flag,
-                backup=backup)
+                backup_root=backup_root)
             self.q.put(("lines", [
                 engine.summary_text(summary),
                 f"Took {(datetime.datetime.now() - started).seconds}s."]))
@@ -784,8 +887,15 @@ class App(tk.Tk):
                     self.tills[m[1]] = m[2]
                 elif kind == "tills_done":
                     self._fill_tree(keep=self._selected_key())
+                elif kind == "download":
+                    self.pending_downloads.append(m[1])
+                    self._log("Download complete: " + os.path.basename(m[1]))
+                elif kind == "browser_closed":
+                    self._log("Download browser closed.")
                 elif kind == "package":
                     _k, pkg, err = m
+                    self.loading = False
+                    self._set_busy(False)
                     self.status_lbl.config(text="")
                     self.bar["value"] = 0
                     if err:
@@ -804,6 +914,8 @@ class App(tk.Tk):
                     self.status_lbl.config(text="")
         except queue.Empty:
             pass
+        if self.pending_downloads and not (self.busy or self.loading):
+            self._load_package(self.pending_downloads.pop(0))
         self.after(100, self._pump)
 
     def _close(self):
@@ -811,6 +923,8 @@ class App(tk.Tk):
                 APP_TITLE, "A copy is still running. Quit anyway?"):
             return
         self._save_cfg()
+        if self.download_session:
+            self.download_session.close()
         self.destroy()
 
 

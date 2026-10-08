@@ -86,6 +86,8 @@ def main():
         for n in (1, 2):
             d = work / f"shop{i}" / f"till{n}"
             d.mkdir()
+            (d / "postrans.dat").write_text("synthetic transactions")
+            (d / "posdebtor.dat").write_text("synthetic debtors")
             t.append({"number": n, "name": f"TILL {n}", "share": str(d)})
         tills[store._norm(str(bo))] = t
         cfg["shops"].append(store.new_shop(f"Shop {i}", str(bo)))
@@ -114,11 +116,33 @@ def main():
         rows = [i for i in app.tree.get_children()]
         assert len(rows) == 3 and len(app.tree.get_children(rows[0])) == 3
 
+        # --- real checkbox hit testing, keyboard toggle and mixed shop state
+        iid = "0:t1"
+        x, y, width, height = app.tree.bbox(iid, "#0")
+        image_x = next(px for px in range(x, x + width)
+                       if "image" in app.tree.identify_element(px, y + height//2))
+        app.tree.event_generate("<Button-1>", x=image_x, y=y+height//2)
+        app.update()
+        assert not app._ticked(0, "t1") and app._shop_state(0) == "some"
+        app._tree_space(None)
+        assert app._ticked(0, "t1") and app._shop_state(0) == "all"
+        # Check geometry at minimum size, including all primary actions.
+        app.geometry("1000x680+30+30")
+        app.update()
+        for button in app.btns + app.package_btns + [app.stop_btn]:
+            assert button.winfo_ismapped(), button.cget("text")
+            assert button.winfo_rootx() + button.winfo_width() <= app.winfo_rootx() + app.winfo_width()
+            assert button.winfo_rooty() + button.winfo_height() <= app.winfo_rooty() + app.winfo_height()
+        app.geometry("1200x860+30+30")
+        app.update()
+
         # --- drop the package on the window (over the shop list, not a pane)
         drop(app, app.tree, [zip_path])
         assert wait_for(app, lambda: app.pkg is not None), "package not loaded"
         print(app.pkg.summary())
         assert app.pkg.bo and app.pkg.pos
+        assert "\n" not in app.drop_info.cget("text"), "package summary crowds destination rows"
+        assert "BO_" in app.drop_info.cget("text") and "POS_" in app.drop_info.cget("text")
 
         # --- upgrade ONE till
         app.tree.selection_set("1:t2")
@@ -163,6 +187,10 @@ def main():
         assert all(has(s["bo_path"]) for s in cfg_s)
         marks = [ascii(app.tree.set(f"{i}:t1", "status")) for i in range(3)]
         print("ALL: OK  ->", marks)
+        snapshots = list(Path(store.pos_backup_dir()).rglob("postrans.dat"))
+        assert snapshots and all(p.parent.joinpath("posdebtor.dat").is_file() for p in snapshots)
+        assert not any(Path(s["bo_path"], "_koenekt_backup").exists() for s in cfg_s)
+        print("POS data backups + manual BO policy: OK")
 
         # --- a junk drop is refused, the loaded package survives
         junk = work / "junk.zip"

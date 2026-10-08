@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from techtool import engine, package, store
+from techtool import downloads, engine, package, store
 
 # Optional: point KUT_REAL_ZIP at a genuine Vector package to test against it.
 REAL_ZIP = os.environ.get("KUT_REAL_ZIP", "")
@@ -143,6 +143,20 @@ class PackageTests(unittest.TestCase):
         p = package.load(b, self.scratch)
         self.assertEqual(p.bo.files(), ["NEW.exe"])
 
+    def test_failed_replacement_keeps_loaded_package_files(self):
+        previous = self._pkg()
+        before = Path(previous.pos.dir, "RPOS25.exe").read_bytes()
+        junk = Path(self.base, "junk.zip")
+        junk.write_bytes(b"not a zip")
+        with self.assertRaises(ValueError):
+            package.load(str(junk), self.scratch)
+        self.assertEqual(Path(previous.pos.dir, "RPOS25.exe").read_bytes(), before)
+
+    def test_dat_files_in_payload_are_never_copied_to_live_databases(self):
+        p = self._pkg(pos_files={"postrans.dat": "vendor data", "nested/other.DAT": "data",
+                                 "RPOS25.exe": "exe", "_UpgradeRequired": "POS_9.zip"})
+        self.assertEqual(sorted(p.pos.files()), ["RPOS25.exe", "_UpgradeRequired"])
+
     @unittest.skipUnless(REAL_ZIP and os.path.isfile(REAL_ZIP),
                          "set KUT_REAL_ZIP to a real Vector package to run this")
     def test_the_real_vector_package(self):
@@ -168,7 +182,7 @@ class StoreTests(unittest.TestCase):
             p = os.path.join(td, "shops.json")
             cfg = store.load(p)
             self.assertEqual(cfg["vnc_default"], "1234")
-            self.assertTrue(cfg["backup"])
+            self.assertNotIn("backup", cfg)
             cfg["shops"].append(store.new_shop("A", r"\\srv\Ramset"))
             cfg["shops"].append(store.new_shop("B", r"\\srv2\Ramset", "9999",
                                                off=["bo", "t3"]))
@@ -250,7 +264,7 @@ class PayloadCopyTests(unittest.TestCase):
             return real(a, b, **kw)
 
         with patch.object(engine.shutil, "copy2", spy):
-            r = engine.copy_payload(self.payload, self.dest, backup=False)
+            r = engine.copy_payload(self.payload, self.dest)
         self.assertEqual(order[-1], "_UpgradeRequired")
         self.assertEqual(r["copied"], 3)
         self.assertFalse(r["marker_withheld"])
@@ -264,45 +278,28 @@ class PayloadCopyTests(unittest.TestCase):
             return real(a, b, **kw)
 
         with patch.object(engine.shutil, "copy2", flaky):
-            r = engine.copy_payload(self.payload, self.dest, backup=False)
+            r = engine.copy_payload(self.payload, self.dest)
         self.assertEqual(len(r["failed"]), 1)
         self.assertTrue(r["marker_withheld"])
         self.assertFalse(os.path.exists(
             os.path.join(self.dest, "_UpgradeRequired")))
         self.assertTrue(os.path.exists(os.path.join(self.dest, "POS_9.zip")))
 
-    def test_backup_keeps_the_old_version(self):
+    def test_replaced_executable_is_not_backed_up(self):
         _write(os.path.join(self.dest, "RPOS25.exe"), "old-exe")
         _write(os.path.join(self.dest, "Ramset.dat"), "live data")
-        r = engine.copy_payload(self.payload, self.dest, backup=True,
-                                stamp="20261008-120000")
-        self.assertEqual(r["backed_up"], 1)
-        self.assertEqual(
-            Path(self.dest, engine.BACKUP_FOLDER, "20261008-120000",
-                 "RPOS25.exe").read_text(), "old-exe")
+        r = engine.copy_payload(self.payload, self.dest)
+        self.assertEqual(r["copied"], 3)
         self.assertEqual(Path(self.dest, "RPOS25.exe").read_text(), "new-exe")
         self.assertEqual(Path(self.dest, "Ramset.dat").read_text(), "live data")
+        self.assertFalse(Path(self.dest, "_koenekt_backup").exists())
 
-    def test_no_backup_folder_when_nothing_is_replaced(self):
-        engine.copy_payload(self.payload, self.dest, backup=True)
-        self.assertFalse(os.path.exists(
-            os.path.join(self.dest, engine.BACKUP_FOLDER)))
-
-    def test_failed_backup_stops_before_copying(self):
-        _write(os.path.join(self.dest, "RPOS25.exe"), "old-exe")
-        real = engine.shutil.copy2
-
-        def nope(a, b, **kw):
-            if engine.BACKUP_FOLDER in b:
-                raise OSError("disk full")
-            return real(a, b, **kw)
-
-        with patch.object(engine.shutil, "copy2", nope):
-            r = engine.copy_payload(self.payload, self.dest, backup=True)
-        self.assertEqual(r["copied"], 0)
-        self.assertIn("nothing was copied", r["failed"][0])
-        self.assertEqual(
-            Path(self.dest, "RPOS25.exe").read_text(), "old-exe")
+    def test_copy_never_creates_destination_root(self):
+        gone = os.path.join(self.root, "missing")
+        result = engine.copy_payload(self.payload, gone)
+        self.assertEqual(result["copied"], 0)
+        self.assertTrue(result["marker_withheld"])
+        self.assertFalse(os.path.exists(gone))
 
 
 class EngineTests(unittest.TestCase):
@@ -318,6 +315,9 @@ class EngineTests(unittest.TestCase):
             t2 = os.path.join(self.root, f"shop{i}", "till2")
             for d in (bo, t1, t2):
                 os.makedirs(d)
+            for d in (t1, t2):
+                _write(os.path.join(d, "postrans.dat"), "transactions")
+                _write(os.path.join(d, "posdebtor.dat"), "debtors")
             self.tills[bo] = [{"name": "TILL 1", "number": 1, "share": t1},
                               {"name": "TILL 2", "number": 2, "share": t2}]
             self.shops.append(dict(store.new_shop(f"Shop {i}", bo), _idx=i))
@@ -356,7 +356,8 @@ class EngineTests(unittest.TestCase):
         ev = []
         s = engine.run_upgrade(targets, self.bo if bo else None,
                                self.pos if pos else None,
-                               lambda *a: ev.append(a), **kw)
+                               lambda *a: ev.append(a),
+                               backup_root=os.path.join(self.root, "backups"), **kw)
         return s, ev
 
     def test_plan_covers_every_destination(self):
@@ -466,15 +467,78 @@ class EngineTests(unittest.TestCase):
         self.assertIn(("target", "0:t1", "partial", "failed"), ev)
         self.assertIn("un-triggered", engine.summary_text(s))
 
-    def test_backup_runs_on_real_upgrade(self):
+    def test_back_office_does_not_get_automatic_backups(self):
         old = os.path.join(self.shops[1]["bo_path"], "BackOffice.exe")
         _write(old, "old-bo")
         plan = engine.build_plan(self.shops[1:2], False, True)
-        s, _ = self._run(plan["targets"], pos=False, backup=True)
-        self.assertEqual(s["backed_up"], 1)
-        found = list(Path(self.shops[1]["bo_path"],
-                          engine.BACKUP_FOLDER).rglob("BackOffice.exe"))
-        self.assertEqual(found[0].read_text(), "old-bo")
+        summary, _ = self._run(plan["targets"], pos=False)
+        self.assertEqual(summary["backed_up"], 0)
+        self.assertFalse(Path(self.shops[1]["bo_path"], "_koenekt_backup").exists())
+        self.assertFalse(Path(self.root, "backups").exists())
+
+    def test_only_two_dat_files_saved_by_shop_and_till_before_payload(self):
+        plan = engine.build_plan(self.shops[1:2], True, False)
+        dest = plan["targets"][0]["dest"]
+        _write(os.path.join(dest, "Pos.exe"), "old-exe")
+        _write(os.path.join(dest, "other.dat"), "other")
+        order = []
+        real = engine.shutil.copy2
+        def spy(a, b, **kw):
+            order.append((a, b))
+            return real(a, b, **kw)
+        with patch.object(engine.shutil, "copy2", spy):
+            summary, _ = self._run(plan["targets"], bo=False)
+        self.assertEqual(summary["backed_up"], 4)
+        backups = Path(self.root, "backups")
+        saved = [p for p in backups.rglob("*") if p.is_file()]
+        self.assertEqual(sorted(p.name for p in saved),
+                         ["posdebtor.dat", "posdebtor.dat", "postrans.dat", "postrans.dat"])
+        self.assertTrue(all("Shop 1" in p.parts for p in saved))
+        self.assertTrue(any("TILL 1" in str(p) for p in saved))
+        self.assertTrue(any("TILL 2" in str(p) for p in saved))
+        self.assertEqual(Path(dest, "postrans.dat").read_text(), "transactions")
+        self.assertEqual([Path(b).name for a, b in order[:2]], list(engine.POS_DATA_FILES))
+        self.assertEqual([Path(b).name for a, b in order][4], "_UpgradeRequired")
+
+    def test_failed_pos_backup_withholds_every_payload_file_and_continues(self):
+        plan = engine.build_plan(self.shops[:1], True, True)
+        dest = plan["targets"][1]["dest"]
+        real = engine.shutil.copy2
+        def flaky(a, b, **kw):
+            if a == os.path.join(dest, "posdebtor.dat"):
+                raise PermissionError("locked")
+            return real(a, b, **kw)
+        with patch.object(engine.shutil, "copy2", flaky):
+            summary, _ = self._run(plan["targets"])
+        self.assertEqual(summary["failed_targets"], 1)
+        self.assertEqual(summary["withheld"], 1)
+        self.assertEqual(summary["ok"], 2)
+        self.assertFalse(Path(dest, "Pos.exe").exists())
+        self.assertFalse(Path(dest, "_UpgradeRequired").exists())
+
+    def test_missing_database_skips_till(self):
+        plan = engine.build_plan(self.shops[:1], True, False)
+        os.remove(os.path.join(plan["targets"][0]["dest"], "postrans.dat"))
+        summary, _ = self._run(plan["targets"], bo=False)
+        self.assertEqual(summary["failed_targets"], 1)
+        self.assertEqual(summary["ok"], 1)
+        self.assertIn("missing postrans.dat", summary["failed"][0])
+
+    def test_repeated_runs_keep_separate_backup_snapshots(self):
+        plan = engine.build_plan(self.shops[:1], True, False)
+        self._run(plan["targets"], bo=False)
+        self._run(plan["targets"], bo=False)
+        self.assertEqual(len(list(Path(self.root, "backups").rglob("postrans.dat"))), 4)
+
+    def test_folder_names_are_safe_and_collision_resistant(self):
+        self.assertEqual(engine._folder_name("../Shop:/bad"), "_Shop__bad")
+        self.assertEqual(engine._folder_name("CON"), "_CON")
+        plan = engine.build_plan(self.shops[:1], True, False)
+        for target in plan["targets"]:
+            target["shop"] = "Shop / 0"
+            target["label"] = "Till " + "X" * 100
+        self._run(plan["targets"], bo=False)
+        self.assertEqual(len(list(Path(self.root, "backups").rglob("postrans.dat"))), 2)
 
     def test_cancel_stops_between_targets(self):
         plan = engine.build_plan(self.shops, False, True)
@@ -601,6 +665,49 @@ class PortableTests(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(d, ignore_errors=True)
+
+
+class DownloadTests(unittest.TestCase):
+    def setUp(self):
+        self.session = downloads.DownloadSession(lambda *a: None)
+    def tearDown(self):
+        self.session.close()
+
+    def test_only_completed_session_zip_is_emitted_once(self):
+        folder = self.session.folder
+        partial = folder / "partial.zip.crdownload"
+        partial.write_bytes(b"partial")
+        (folder / "notes.txt").write_text("ignore")
+        complete = folder / "upgrade.zip"
+        complete.write_bytes(b"completed")
+        self.assertEqual(self.session.completed(), [])
+        self.assertEqual(self.session.completed(), [str(complete)])
+        self.assertEqual(self.session.completed(), [])
+        partial.rename(folder / "partial.zip")
+        self.assertEqual(self.session.completed(), [])
+        self.assertEqual(len(self.session.completed()), 1)
+
+    def test_changing_download_is_not_ready(self):
+        path = self.session.folder / "upgrade.zip"
+        path.write_bytes(b"a")
+        self.session.completed()
+        path.write_bytes(b"ab")
+        self.assertEqual(self.session.completed(), [])
+        self.assertEqual(self.session.completed(), [str(path)])
+
+    def test_preferences_use_temp_and_disable_password_saving(self):
+        preferences = json.loads((self.session.profile / "Default" / "Preferences").read_text())
+        self.assertEqual(preferences["download"]["default_directory"], str(self.session.folder))
+        self.assertFalse(preferences["download"]["prompt_for_download"])
+        self.assertFalse(preferences["credentials_enable_service"])
+        self.assertTrue(str(self.session.root).startswith(tempfile.gettempdir()))
+
+    def test_missing_browser_is_clear_and_cleans_temp(self):
+        root = self.session.root
+        with patch.object(downloads, "find_browser", side_effect=OSError("Edge needed")):
+            with self.assertRaisesRegex(OSError, "Edge needed"):
+                self.session.start()
+        self.assertFalse(root.exists())
 
 
 class IndependenceTests(unittest.TestCase):

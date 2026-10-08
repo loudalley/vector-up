@@ -24,9 +24,17 @@ notes if you want to confirm the file.
 1. **Add your shops** (name + the back-office folder holding `Ramset.dat` and
    `VectorTerminals.ini`, e.g. `\\SERVER\Ramset`). The tills are read from that
    INI. Handles 20+ shops.
-2. **Drop Vector's upgrade zip** (the one containing `BO\` and `POS\` folders)
+2. **Get or drop Vector's upgrade zip** (the one containing `BO\` and `POS\` folders)
    on the window. It is unpacked and sorted for you. `Utilities\` and
-   `InstallationNotes.txt` are never copied.
+   `InstallationNotes.txt` are never copied. **Get package** opens
+   [Vector's downloads](https://www.vectortech.co.za/dwnlds/login.php) in a small
+   Edge browser window (Chrome is a fallback). The installer supplies the login
+   details directly there. Choose an upgrade ZIP; once its download finishes,
+   it loads automatically into Vector-Up. Partial downloads are not imported.
+   The browser uses a separate temporary profile with password saving off;
+   its profile and downloads are removed when Vector-Up closes. If browser
+   policies prevent automatic import, download the ZIP normally and drop it
+   here or use **Browse ZIP**.
 3. **Upgrade.** Tick what you want (a whole shop, just its back office, just
    one till) and press *Upgrade ticked*, or select a row and press *Upgrade
    selected row* (right-click works too), or *Upgrade ALL*. *Check* shows what
@@ -36,8 +44,8 @@ notes if you want to confirm the file.
 
 You can also drag the zip onto the exe icon to start with it loaded.
 
-**Close Vector on the PCs being upgraded first.** Locked files are reported
-per row, not skipped silently.
+**Close Vector on the PCs being upgraded first, and manually back up the back
+office.** Locked files are reported per row, not skipped silently.
 
 ## How the copy works
 
@@ -51,9 +59,17 @@ starts. So:
 - `_UpgradeRequired` is the file that tells Vector to start upgrading. It is
   copied **last**, and **not at all** if any other file failed, so a half-copied
   till cannot start upgrading. Run it again to finish.
-- Before overwriting, replaced files are saved to
-  `<destination>\_koenekt_backup\<timestamp>\` (untick *Back up…* to disable).
-  If the backup fails, nothing is copied to that destination.
+- Before copying to a till, only `postrans.dat` and `posdebtor.dat` are backed
+  up locally. In the portable EXE they go to
+  `VectorUp_data\POS backups\<shop>\<till - number - identifier>\<timestamp>\`.
+  The identifier separates tills with the same name. **Open POS backups**
+  opens this folder. Both data files must exist and be saved successfully;
+  otherwise that till is skipped before any upgrade files are copied, while
+  other destinations continue. A fresh timestamp keeps every backup separate.
+- There are no automatic back-office or replaced-file backups. Make the
+  back-office backup manually; Vector handles its own upgrade backups.
+- Live databases are never written by Vector-Up; direct `.dat` files supplied
+  in a package are excluded from the copied payload.
 - Every destination is checked reachable first. A mistyped path is reported,
   never created.
 
@@ -61,17 +77,20 @@ starts. So:
 
 Settings (shops, ticks, `upgrade.log`) are saved in a `VectorUp_data` folder
 **beside the exe**. Copy the exe and that folder together to move to another
-PC. If the exe's folder is read-only, settings go to
+PC. POS backups are also kept under that folder. If the exe's folder is
+read-only, settings go to
 `%LOCALAPPDATA%\Koenekt\VectorUp` instead.
 
 ## Build from source
 
-Python 3.14 (Windows), tkinter included. No runtime dependencies.
+Python 3.14 (Windows), tkinter included. No Python runtime dependencies.
+Get package needs an installed Microsoft Edge or Google Chrome browser.
 
 ```
 python techtool_main.py                  # run from source
 python tests/test_techtool.py            # unit tests
 python tests/check_techtool_gui.py       # opens the real window, needs a desktop
+python tests/check_vector_download.py    # real browser -> app, synthetic local ZIP
 build_portable.bat                       # both exes (needs PyInstaller in each Python)
 ```
 

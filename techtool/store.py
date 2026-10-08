@@ -85,6 +85,11 @@ def scratch_dir():
     return d
 
 
+def pos_backup_dir():
+    """Durable local backups; never store live till data in staging temp."""
+    return os.path.join(data_dir(), "POS backups")
+
+
 def _path(path=None):
     return path or os.path.join(data_dir(), "shops.json")
 
@@ -97,8 +102,7 @@ def new_shop(name="", bo_path="", vnc_password="", selected=True, off=None):
 
 
 def load(path=None):
-    cfg = {"shops": [], "vnc_default": DEFAULT_VNC, "group_shortcuts": True,
-           "backup": True}
+    cfg = {"shops": [], "vnc_default": DEFAULT_VNC, "group_shortcuts": True}
     try:
         with open(_path(path), "r", encoding="utf-8-sig") as f:  # Notepad BOM
             raw = json.load(f)
@@ -107,7 +111,6 @@ def load(path=None):
     if isinstance(raw, dict):
         cfg["vnc_default"] = str(raw.get("vnc_default") or DEFAULT_VNC)
         cfg["group_shortcuts"] = bool(raw.get("group_shortcuts", True))
-        cfg["backup"] = bool(raw.get("backup", True))
         for s in raw.get("shops") or []:
             if isinstance(s, dict):
                 cfg["shops"].append(new_shop(

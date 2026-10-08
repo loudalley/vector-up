@@ -80,8 +80,12 @@ the user MUST be told. This is not optional and not only for big changes.
 - `_UpgradeRequired` triggers Vector's upgrade. It must be copied **LAST** and
   **withheld if any other file failed**, so a half-copied till cannot start
   upgrading. (`engine.copy_payload`, `package.Payload.files`.)
-- Replaced files are backed up first to `<dest>\_koenekt_backup\<stamp>\`
-  (default on); a failed backup means nothing is copied there.
+- Before a POS upgrade, back up ONLY `postrans.dat` and `posdebtor.dat`,
+  read-only from the till, to the tool's local `VectorUp_data\POS backups\`
+  (fallback settings folder when necessary), under named shop/till/timestamp
+  folders. If either file is missing or cannot be backed up, nothing is copied
+  to that till; continue with the others. Do not back up replaced upgrade files.
+  Back-office backups are manual; Vector handles its own upgrade backups.
 - Every destination is checked reachable before copying. Never `makedirs` a
   destination root - a mistyped path must not become a stray folder.
 - One bad shop/till never stops the rest. Stop button works between targets.
@@ -89,8 +93,9 @@ the user MUST be told. This is not optional and not only for big changes.
   `%LOCALAPPDATA%\Koenekt\VectorUp`). Staged files go to `%TEMP%`, never the
   stick. Keep it working as a single-file exe in both 32-bit and 64-bit.
 - **Free for all:** no licence checks, no phone-home, no telemetry.
-- Til/INI parsing is read-only. Never write `VectorTerminals.ini`, and never
-  touch `.dat` databases.
+- Til/INI parsing is read-only. Never write `VectorTerminals.ini` or modify live
+  `.dat` databases. The only database access here is reading the two POS files
+  above for backup; direct `.dat` files in upgrade payloads are not copied.
 
 ## Technical traps
 
