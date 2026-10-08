@@ -1,0 +1,24 @@
+---
+description: Entry point and required handoff routine for Vector-Up by Koenekt
+globs:
+alwaysApply: true
+---
+
+# Cursor entry point
+
+Read `AGENTS.md` and `README-HANDOFF.md` before doing anything in this project.
+
+Codex/ChatGPT, Claude and Cursor all edit this same repository (including
+theming) and share ONE handoff document. **Every time** you change anything:
+
+1. Update `README-HANDOFF.md` (date, assistant, what changed, tests actually
+   run, what was NOT verified, exact next step).
+2. Commit and `git push origin master`.
+3. **Tell the user in your reply** that the handoff was updated and pushed -
+   always, even for a small change.
+
+This repository is PUBLIC: never commit secrets, real shop data, or binaries
+(exes go on GitHub Releases only).
+
+Do not copy the shared rules into another Cursor rule. This file is a pointer;
+`AGENTS.md` is the single source of truth.
