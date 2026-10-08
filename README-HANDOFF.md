@@ -7,6 +7,9 @@ push, and tell the user.
 ## Current state
 
 - **Date / assistant:** 2026-10-08, Codex (GPT-6).
+- **Git confirmation:** UI/backup/download changes committed as `7628b6d` and
+  verified on `origin/master` on 2026-10-08. No application changes in this
+  commit/push follow-up; no tests rerun. Live checks below remain outstanding.
 - **Version:** 1.3.0. Both portable EXEs built locally in `dist/`; no 1.3.0
   GitHub release published in this turn. Published release remains v1.2.0.
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
@@ -86,6 +89,11 @@ Publish v1.3.0 with the two EXEs and SHA-256 notes when a release is requested.
 
 ## Handoff log
 
+- **2026-10-08 - Codex (GPT-6):** user requested push/commit. Fetched origin
+  and confirmed the clean local master matched origin/master, including the
+  1.3.0 implementation commit `7628b6d`. Updated this handoff confirmation;
+  no source changes or tests rerun. Next: installer login and one test till
+  as described above. Real shops/tills remain untested.
 - **2026-10-08 - Codex (GPT-6), 1.3.0:** refreshed styling/fonts/checkboxes;
   replaced upgrade-file backups with mandatory local two-file POS snapshots
   grouped by shop/till/time; BO backups manual. Added Get package mini browser
