@@ -40,12 +40,39 @@ push, and tell the user.
 
 ### Next steps
 
-1. Real Explorer drag onto the window, then a copy to ONE test till, then check
+1. Implement the UI styling pass after this read-up: centralise font roles and
+   ttk styles in `techtool/gui.py`, align buttons and checkbox visuals, give
+   destination rows more space, and use dark text on the pale drop zone.
+   Preserve the shop all/some/none selection behaviour. Run the GUI check and
+   inspect the real window after changes, including at the minimum size.
+2. Real Explorer drag onto the window, then a copy to ONE test till, then check
    Vector upgrades itself. Report results here.
-2. User is theming the UI (colours/fonts at the top of `techtool/gui.py`).
+
+### Latest review - 2026-10-08, Codex (GPT-6)
+
+- Version remains 1.2.0. User requested a read-up before UI changes; no
+  application code, build or release was changed.
+- Read the shared rules, handoff, README, GUI code and GUI check. Reviewed
+  official Python ttk and Microsoft typography/checkbox documentation.
+- Findings: tree ticks are Unicode text symbols, while settings use ttk
+  Checkbuttons; custom Tk action buttons mix with default ttk controls; fonts
+  and some colours are still inline despite the shared constants.
+- Checks actually run: a hidden Tk runtime probe succeeded (Tk 8.6.15, vista
+  theme, default ttk fonts Segoe UI 9pt). A colour calculation measured green
+  text on the pale drop zone at 1.98:1 and dark text on green at 7.36:1.
+- No unit suite or GUI workflow check run in this documentation-only review.
+  The real application window, clipping, DPI behaviour and real shops/tills
+  were not inspected or tested in this turn. Prior test results above are
+  historical. Exact next step is the UI styling pass in item 1 above.
 
 ## Handoff log
 
+- **2026-10-08 - Codex (GPT-6):** read up on the current UI and official styling
+  guidance at the user's request. Recorded mixed Tk/ttk styling, default 9pt
+  fonts, Unicode tree tickboxes and low-contrast drop-zone text. Runtime/font
+  probe and contrast calculation passed; no app code changes, build, GUI
+  workflow test or real-till test. Next: implement and visually check the UI
+  styling pass. Version remains 1.2.0.
 - **2026-10-08 - Claude:** created the project from the Reporter's upgrade
   feature; built the one-window package workflow, per-till/BO/all upgrades,
   portable exes (win32 + win64), named it Vector-Up by Koenekt, published the
