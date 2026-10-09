@@ -19,6 +19,7 @@ echo === %2 ===
 py -%1 -m PyInstaller --noconfirm --clean --onefile --windowed ^
   --name VectorUp-%VER%-%2 --icon "%~dp0app_icon.ico" ^
   --add-data "%~dp0app_icon.ico;." ^
+  --add-data "%~dp0assets;assets" ^
   --distpath dist --workpath build\pyi-%2 --specpath build\pyi-%2 ^
   "%~dp0techtool_main.py" > build-%VER%-%2.log 2>&1
 if errorlevel 1 (echo FAILED, see build-%VER%-%2.log & exit /b 1)

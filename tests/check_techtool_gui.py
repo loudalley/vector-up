@@ -105,7 +105,27 @@ def main():
             patch.object(messagebox, "showinfo", lambda *a, **k: None), \
             patch.object(messagebox, "showwarning", lambda *a, **k: None):
         app = gui.App()
+        callback_errors = []
+        app.report_callback_exception = lambda *args: callback_errors.append(args)
         app.geometry("1200x820+30+30")
+        app.update()
+        assert app._intro and app._intro.winfo_ismapped(), "startup logo not visible"
+        assert len(app._intro_frames) == 21, "startup logo frames missing"
+        assert app.koenekt_logo and app.vector_logo, "brand assets missing"
+        assert wait_for(app, lambda: app._intro is None, 4), "startup animation did not finish"
+        assert not app._intro_frames and not app._intro_after
+        # Dismissal must cancel its timer and release images without stale callbacks.
+        app._start_intro()
+        app.update()
+        app.event_generate("<Escape>")
+        app.update()
+        assert app._intro is None and not app._intro_after, "Escape did not dismiss startup logo"
+        app._start_intro()
+        app.update()
+        app._intro.event_generate("<Button-1>")
+        app.update()
+        assert app._intro is None and not app._intro_after, "click did not dismiss startup logo"
+        print("Brand resources + automatic fade + Escape/click dismissal: OK")
         assert wait_for(app, lambda: len(app.tills) == 3), "tills not read"
         app.update()
         assert app.dnd._hwnd, "drop target was not installed"
@@ -129,6 +149,13 @@ def main():
         assert not app._ticked(0, "t1") and app._shop_state(0) == "some"
         app._tree_space(None)
         assert app._ticked(0, "t1") and app._shop_state(0) == "all"
+        app.tree.focus_set()
+        app.tree.event_generate("<space>")
+        app.update()
+        assert not app._ticked(0, "t1"), "actual Space event did not toggle focused row"
+        app.tree.event_generate("<space>")
+        app.update()
+        assert app._ticked(0, "t1")
         # Check geometry at minimum size, including all primary actions.
         app.geometry("1000x680+30+30")
         app.update()
@@ -136,6 +163,16 @@ def main():
             assert button.winfo_ismapped(), button.cget("text")
             assert button.winfo_rootx() + button.winfo_width() <= app.winfo_rootx() + app.winfo_width()
             assert button.winfo_rooty() + button.winfo_height() <= app.winfo_rooty() + app.winfo_height()
+        for widget in (app.tree, app.log, app.status_lbl):
+            assert widget.winfo_ismapped()
+            assert widget.winfo_height() >= 16, "main content collapsed at minimum size"
+            assert widget.winfo_rooty() + widget.winfo_height() <= app.winfo_rooty() + app.winfo_height(), \
+                "main content clipped at minimum size"
+        app._log("Minimum-size activity message")
+        app.update()
+        visible_line = app.log.dlineinfo("end-2c")
+        assert visible_line and visible_line[1] + visible_line[3] <= app.log.winfo_height(), \
+            "newest activity message not readable at minimum size"
         app.geometry("1200x860+30+30")
         app.update()
 
@@ -203,6 +240,7 @@ def main():
         wait_for(app, lambda: False, 1.5)
         assert app.pkg is before
         print("bad drop refused, package kept: OK")
+        assert not callback_errors, callback_errors
         app.destroy()
     print("GUI + package + per-till upgrade check: OK")
 

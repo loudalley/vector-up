@@ -8,6 +8,7 @@ import datetime
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk, font as tkfont
 
@@ -19,19 +20,22 @@ from . import APP_TITLE, VERSION, dnd, downloads, engine, package, store
 GREEN = "#73C509"
 DARK = "#17251F"
 GREY = "#596A60"
-LIGHT = "#F3F6F1"
+LIGHT = "#F1F5F2"
 RED = "#C0392B"
 FONT = ("Segoe UI", 10)
 WHITE = "#FFFFFF"
-BORDER = "#DCE4DC"
-HOVER = "#E7EFE3"
-SELECT = "#E2F0D5"
+BORDER = "#D8E2DB"
+HOVER = "#E5EDE7"
+SELECT = "#EAF5DF"
 DISABLED = "#A0AAA2"
 SUCCESS = "#2E7D32"
+ACCENT_HOVER = "#86D51C"
+HEADER_PATTERN = "#263A2E"
+PATTERN = "#E7EEE9"
 FONT_SMALL = ("Segoe UI", 9)
 FONT_STRONG = ("Segoe UI Semibold", 10)
 FONT_SECTION = ("Segoe UI Semibold", 12)
-FONT_TITLE = ("Segoe UI Semibold", 17)
+FONT_TITLE = ("Segoe UI Semibold", 19)
 FONT_PACKAGE = ("Segoe UI Semibold", 14)
 FONT_LOG = ("Consolas", 9)
 
@@ -111,12 +115,12 @@ class ShopDialog(tk.Toplevel):
 
 
 class App(tk.Tk):
-    def __init__(self, initial=None):
+    def __init__(self, initial=None, *, animate=True):
         super().__init__()
         self.title(f"{APP_TITLE} {VERSION}")
-        self.geometry("1200x820")
+        self.geometry("1200x860")
         self.minsize(1000, 680)
-        self.configure(bg=WHITE)
+        self.configure(bg=LIGHT)
         ico = _resource("app_icon.ico")
         if ico:
             try:
@@ -138,6 +142,10 @@ class App(tk.Tk):
         self.status = {}   # row key -> (state, text)
 
         self._build()
+        self._intro = None
+        self._intro_after = None
+        if animate:
+            self._start_intro()
         self.dnd = dnd.DropTargets(
             self, [(self.body, self._dropped)],
             on_miss=lambda: self._log("Drop the upgrade package on the window."))
@@ -158,18 +166,19 @@ class App(tk.Tk):
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure(".", font=FONT, background=WHITE, foreground=DARK)
-        style.configure("TButton", padding=(10, 7), relief="flat",
+        style.configure("TButton", padding=(10, 5), relief="flat",
                         background=LIGHT, bordercolor=BORDER, focuscolor=GREY)
         style.map("TButton", background=[("active", HOVER)],
                   foreground=[("disabled", DISABLED)])
         style.configure("Primary.TButton", background=GREEN, font=FONT_STRONG,
-                        bordercolor=GREEN, padding=(14, 9))
-        style.map("Primary.TButton", background=[("disabled", LIGHT), ("active", SELECT)])
-        style.configure("Action.TButton", font=FONT_STRONG, padding=(12, 9))
+                        bordercolor=GREEN, padding=(14, 7))
+        style.map("Primary.TButton", background=[("disabled", LIGHT), ("active", ACCENT_HOVER)],
+                  foreground=[("disabled", DISABLED), ("!disabled", DARK)])
+        style.configure("Action.TButton", font=FONT_STRONG, padding=(12, 7))
         style.configure("TEntry", padding=5, fieldbackground=WHITE,
                         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
         style.configure("Treeview", background=WHITE, fieldbackground=WHITE,
-                        font=FONT, rowheight=round(self.winfo_fpixels("0.30i")),
+                        font=FONT, rowheight=round(self.winfo_fpixels("0.36i")),
                         bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
         style.map("Treeview", background=[("selected", SELECT)],
                   foreground=[("selected", DARK)])
@@ -178,8 +187,15 @@ class App(tk.Tk):
         style.map("Treeview.Heading", background=[("active", HOVER)])
         style.configure("Horizontal.TProgressbar", background=GREEN,
                         troughcolor=LIGHT, bordercolor=LIGHT, thickness=5)
+        style.configure("TScrollbar", background=BORDER, troughcolor=LIGHT,
+                        bordercolor=LIGHT, arrowcolor=GREY, relief="flat")
+        style.configure("TMenubutton", padding=(10, 5), background=LIGHT,
+                        bordercolor=BORDER, relief="flat")
         self.check_images = self._checkbox_images()
         style.element_create("Koenekt.Check", "image", self.check_images["none"],
+                             ("disabled", "selected", self.check_images["disabled_all"]),
+                             ("disabled", "alternate", self.check_images["disabled_some"]),
+                             ("disabled", self.check_images["disabled"]),
                              ("selected", self.check_images["all"]),
                              ("alternate", self.check_images["some"]))
         style.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
@@ -187,53 +203,191 @@ class App(tk.Tk):
             ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
                 ("Checkbutton.label", {"sticky": "nswe"})]})]})])
         style.configure("TCheckbutton", padding=(0, 5, 8, 5))
-        style.map("TCheckbutton", background=[("active", WHITE)])
+        style.configure("TCheckbutton", background=LIGHT)
+        style.map("TCheckbutton", background=[("active", LIGHT)],
+                  foreground=[("disabled", DISABLED)])
 
     def _checkbox_images(self):
-        size = max(16, round(self.winfo_fpixels("1i") * 18 / 96))
+        """Rounded, antialiased controls with a continuous, font-free tick."""
+        size = max(20, round(self.winfo_fpixels("1i") * 21 / 96))
         images = {}
-        for state in ("none", "some", "all", "disabled"):
-            im = tk.PhotoImage(master=self, width=size + 8, height=size)
-            border = DISABLED if state == "disabled" else (GREY if state == "none" else GREEN)
-            im.put(border, to=(0, 0, size, size))
-            im.put(WHITE if state in ("none", "disabled") else GREEN, to=(1, 1, size-1, size-1))
-            if state == "some":
-                im.put(DARK, to=(size//4, size//2-1, size*3//4, size//2+2))
-            elif state == "all":
-                # Rasterised check: independent of the machine's symbol fonts.
-                for x in range(size//5, size*4//5):
-                    y = (size//2 + x-size//5 if x < size*2//5 else
-                         size*7//10 - (x-size*2//5))
-                    y = max(2, min(size-3, y))
-                    im.put(DARK, to=(x, y, x+1, y+2))
+        def rgb(color):
+            return tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+
+        def rounded(x, y, inset):
+            radius = .20 - inset
+            dx = max(inset + radius - x, 0, x - (1 - inset - radius))
+            dy = max(inset + radius - y, 0, y - (1 - inset - radius))
+            return (inset <= x <= 1-inset and inset <= y <= 1-inset
+                    and dx*dx + dy*dy <= radius*radius)
+
+        def segment(x, y, a, b):
+            dx, dy = b[0]-a[0], b[1]-a[1]
+            t = max(0, min(1, ((x-a[0])*dx + (y-a[1])*dy)/(dx*dx + dy*dy)))
+            return (x-a[0]-t*dx)**2 + (y-a[1]-t*dy)**2 < .065**2
+
+        for state in ("none", "some", "all", "disabled", "disabled_all", "disabled_some"):
+            im = tk.PhotoImage(master=self, width=size + 10, height=size + 4)
+            disabled = state.startswith("disabled")
+            selected = state.endswith("all") or state.endswith("some")
+            outline = rgb(BORDER if disabled else (GREEN if selected else GREY))
+            fill = rgb(LIGHT if disabled else (GREEN if selected else WHITE))
+            ink = rgb(DISABLED if disabled else DARK)
+            paper = rgb(WHITE)
+            rows = []
+            for py in range(size):
+                pixels = []
+                for px in range(size):
+                    samples = []
+                    for sy in (.125, .375, .625, .875):
+                        for sx in (.125, .375, .625, .875):
+                            x, y = (px+sx)/size, (py+sy)/size
+                            color = paper
+                            if rounded(x, y, .04):
+                                color = fill if rounded(x, y, .105) else outline
+                            if state.endswith("all") and (
+                                    segment(x, y, (.26, .51), (.43, .68)) or
+                                    segment(x, y, (.43, .68), (.76, .32))):
+                                color = ink
+                            elif state.endswith("some") and segment(x, y, (.29, .50), (.71, .50)):
+                                color = ink
+                            samples.append(color)
+                    pixels.append("#%02x%02x%02x" % tuple(round(sum(c[i] for c in samples)/16)
+                                                           for i in range(3)))
+                rows.append("{" + " ".join(pixels) + "}")
+            im.put(" ".join(rows), to=(0, 2))
             images[state] = im
         return images
+
+    def _brand_image(self, name):
+        path = _resource("assets/" + name)
+        if not path:
+            return None
+        try:
+            # Assets are supplied at 2x; no imaging dependency in the EXE.
+            return tk.PhotoImage(master=self, file=path).subsample(2)
+        except tk.TclError:
+            return None
+
+    @staticmethod
+    def _geometry_art(canvas, width, height, color):
+        """Quiet hexagons and triangles inspired by the supplied theme."""
+        canvas.delete("pattern")
+        for col in range(5):
+            for row in range(3):
+                x = width - 25 - col*44
+                y = 12 + row*49 + (24 if col % 2 else 0)
+                canvas.create_polygon(x-26, y, x-13, y-22, x+13, y-22,
+                                      x+26, y, x+13, y+22, x-13, y+22,
+                                      fill="", outline=color, width=1, tags="pattern")
+        canvas.create_polygon(width-235, height, width-210, height-44,
+                              width-185, height, fill=color, outline="", tags="pattern")
+
+    def _start_intro(self):
+        path = _resource("assets/koenekt-fade.png")
+        if not path:
+            return
+        try:
+            strip = tk.PhotoImage(master=self, file=path)
+            self._intro_frames = []
+            for n in range(21):
+                frame = tk.PhotoImage(master=self)
+                self.tk.call(frame, "copy", strip, "-from", 0, n*340, 1320, (n+1)*340,
+                             "-subsample", 2, 2)
+                self._intro_frames.append(frame)
+        except tk.TclError:
+            return
+        self._intro = tk.Canvas(self, bg=WHITE, highlightthickness=0)
+        self._intro.place(x=0, y=0, relwidth=1, relheight=1)
+        self._intro.bind("<Configure>", self._layout_intro)
+        self._intro.bind("<Button-1>", self._dismiss_intro)
+        self._intro_escape = self.bind("<Escape>", self._dismiss_intro, add="+")
+        self._intro_started = time.monotonic()
+        self._animate_intro()
+
+    def _layout_intro(self, event):
+        if not self._intro:
+            return
+        c = self._intro
+        c.delete("layout")
+        self._geometry_art(c, event.width, event.height, PATTERN)
+        self._intro_logo = c.create_image(event.width/2, event.height/2-25,
+                                          image=self._intro_frames[0], tags="layout")
+        c.create_text(event.width/2, event.height/2+98, text="VECTOR-UP  by Koenekt",
+                      fill=DARK, font=FONT_SECTION, tags="layout")
+        c.create_text(event.width/2, event.height/2+127,
+                      text="Vector upgrades, shop by shop", fill=GREY, font=FONT, tags="layout")
+        c.create_text(event.width/2, event.height-40, text="Click or press Esc to continue",
+                      fill=GREY, font=FONT_SMALL, tags="layout")
+
+    def _animate_intro(self):
+        self._intro_after = None
+        if not self._intro:
+            return
+        elapsed = time.monotonic() - self._intro_started
+        if elapsed >= 1.85:
+            self._dismiss_intro()
+            return
+        opacity = min(1, elapsed/.45, (1.85-elapsed)/.55)
+        opacity = max(0, opacity)
+        opacity = opacity*opacity*(3-2*opacity)
+        if hasattr(self, "_intro_logo"):
+            self._intro.itemconfigure(self._intro_logo, image=self._intro_frames[round(opacity*20)])
+        self._intro_after = self.after(25, self._animate_intro)
+
+    def _dismiss_intro(self, _event=None):
+        if self._intro_after:
+            self.after_cancel(self._intro_after)
+            self._intro_after = None
+        if self._intro:
+            self._intro.destroy()
+            self._intro = None
+            self.unbind("<Escape>", self._intro_escape)
+        self._intro_frames = []
 
     def _build(self):
         self._theme()
         head = tk.Frame(self, bg=DARK)
         head.pack(fill="x")
-        tk.Label(head, text="VECTOR-UP  by Koenekt", bg=DARK, fg=WHITE,
-                 font=FONT_TITLE).pack(side="left", padx=22, pady=15)
-        tk.Label(head, text="Vector upgrades, shop by shop", bg=DARK,
-                 fg=GREEN, font=FONT).pack(side="left", padx=12)
-        tk.Label(head, text="FREE", bg=DARK, fg=GREEN,
-                 font=FONT_STRONG).pack(side="right", padx=22)
-        self.body = tk.Frame(self, bg=WHITE)
-        self.body.pack(fill="both", expand=True, padx=22, pady=16)
+        title = tk.Frame(head, bg=DARK)
+        title.pack(side="left", padx=24, pady=12)
+        tk.Label(title, text="VECTOR-UP  by Koenekt", bg=DARK, fg=WHITE,
+                 font=FONT_TITLE).pack(anchor="w")
+        tk.Label(title, text="Vector upgrades, shop by shop", bg=DARK,
+                 fg=GREEN, font=FONT_SMALL).pack(anchor="w", pady=(3, 0))
+        brand = tk.Canvas(head, bg=DARK, width=280, height=76, highlightthickness=0)
+        brand.pack(side="right", padx=(0, 24))
+        self._geometry_art(brand, 280, 84, HEADER_PATTERN)
+        self.koenekt_logo = self._brand_image("koenekt-header.png")
+        if self.koenekt_logo:
+            brand.create_rectangle(82, 13, 280, 69, fill=WHITE, outline="")
+            brand.create_image(181, 41, image=self.koenekt_logo)
+        else:
+            brand.create_text(185, 38, text="koenekt", fill=WHITE, font=FONT_TITLE)
+        tk.Frame(self, bg=GREEN, height=3).pack(fill="x")
+        self.body = tk.Frame(self, bg=LIGHT)
+        self.body.pack(fill="both", expand=True, padx=24, pady=(12, 8))
         self.body.columnconfigure(0, weight=1)
-        self.drop = tk.Frame(self.body, bg=LIGHT, highlightthickness=1,
+        self.drop = tk.Frame(self.body, bg=WHITE, highlightthickness=1,
                              highlightbackground=BORDER)
         self.drop.grid(row=0, column=0, sticky="we")
-        self.drop_title = tk.Label(self.drop,
-            text="Drop your Vector upgrade ZIP here", bg=LIGHT, fg=DARK,
+        self.vector_logo = self._brand_image("vector.png")
+        if self.vector_logo:
+            tk.Label(self.drop, image=self.vector_logo, bg=WHITE).pack(
+                side="right", padx=24, pady=16)
+        package_content = tk.Frame(self.drop, bg=WHITE)
+        package_content.pack(side="left", fill="both", expand=True, padx=20, pady=10)
+        self.drop_title = tk.Label(package_content,
+            text="Drop your Vector upgrade ZIP here", bg=WHITE, fg=DARK,
             font=FONT_PACKAGE)
-        self.drop_title.pack(pady=(16, 4))
-        self.drop_info = tk.Label(self.drop, bg=LIGHT, fg=GREY, font=FONT,
-            justify="center", text="One package. Back-office and till files sorted for you.")
-        self.drop_info.pack()
-        bar = tk.Frame(self.drop, bg=LIGHT)
-        bar.pack(pady=(12, 16))
+        self.drop_title.pack(anchor="w", pady=(4, 3))
+        self.drop_info = tk.Label(package_content, bg=WHITE, fg=GREY, font=FONT,
+            justify="left", anchor="w", text="One package. Back-office and till files sorted for you.")
+        self.drop_info.pack(anchor="w", fill="x")
+        # Package names must not force the window wider than its minimum.
+        package_content.bind("<Configure>", lambda e: self.drop_info.config(wraplength=max(100, e.width)))
+        bar = tk.Frame(package_content, bg=WHITE)
+        bar.pack(anchor="w", pady=(10, 0))
         self.package_btns = []
         for text, command, sty in (
                 ("Get package", self._get_package, "Primary.TButton"),
@@ -241,19 +395,19 @@ class App(tk.Tk):
                 ("Browse folder", self._browse_folder, "TButton"),
                 ("Clear", self._clear_pkg, "TButton")):
             button = ttk.Button(bar, text=text, command=command, style=sty)
-            button.pack(side="left", padx=4)
+            button.pack(side="left", padx=(0, 6))
             self.package_btns.append(button)
-        heading = tk.Frame(self.body, bg=WHITE)
-        heading.grid(row=1, column=0, sticky="we", pady=(18, 8))
-        tk.Label(heading, text="Back offices and tills", bg=WHITE,
+        heading = tk.Frame(self.body, bg=LIGHT)
+        heading.grid(row=1, column=0, sticky="we", pady=(10, 6))
+        tk.Label(heading, text="Back offices and tills", bg=LIGHT,
                  fg=DARK, font=FONT_SECTION).pack(side="left")
-        self.count_lbl = tk.Label(heading, bg=WHITE, fg=GREY, font=FONT_SMALL)
+        self.count_lbl = tk.Label(heading, bg=LIGHT, fg=GREY, font=FONT_SMALL)
         self.count_lbl.pack(side="right")
-        self.body.rowconfigure(2, weight=3)
+        self.body.rowconfigure(2, weight=4, minsize=92)
         treef = tk.Frame(self.body, bg=WHITE)
         treef.grid(row=2, column=0, sticky="nsew")
         self.tree = ttk.Treeview(treef, columns=("status", "where"),
-            show="tree headings", selectmode="browse", height=8)
+            show="tree headings", selectmode="browse", height=6)
         for column, title, width, stretch in (
                 ("#0", "Shop / destination", 300, False),
                 ("status", "Result", 180, False),
@@ -267,6 +421,7 @@ class App(tk.Tk):
         tsb.pack(side="right", fill="y")
         self.tree.pack(fill="both", expand=True)
         self.tree.tag_configure("shop", font=FONT_STRONG, background=LIGHT)
+        self.tree.tag_configure("unavailable", foreground=GREY)
         self.tree.tag_configure("ok", foreground=SUCCESS)
         self.tree.tag_configure("bad", foreground=RED)
         self.tree.bind("<Button-1>", self._tree_click)
@@ -274,8 +429,8 @@ class App(tk.Tk):
         self.tree.bind("<Double-1>", self._tree_double)
         self.tree.bind("<Button-3>", self._tree_menu)
         self.menu = tk.Menu(self, tearoff=0)
-        shopbar = tk.Frame(self.body, bg=WHITE)
-        shopbar.grid(row=3, column=0, sticky="we", pady=(8, 14))
+        shopbar = tk.Frame(self.body, bg=LIGHT)
+        shopbar.grid(row=3, column=0, sticky="we", pady=(6, 8))
         for text, cmd in (("Add shop", self._add_shop), ("Edit", self._edit_shop),
                           ("Remove", self._remove_shop), ("Refresh tills", self._refresh_tills)):
             ttk.Button(shopbar, text=text, command=cmd).pack(side="left", padx=(0, 6))
@@ -289,7 +444,8 @@ class App(tk.Tk):
         more.pack(side="right", padx=(6, 0))
         ttk.Button(shopbar, text="Tick none", command=lambda: self._tick_all(False)).pack(side="right", padx=6)
         ttk.Button(shopbar, text="Tick all", command=lambda: self._tick_all(True)).pack(side="right")
-        acts = tk.Frame(self.body, bg=WHITE)
+        acts = tk.Frame(self.body, bg=WHITE, padx=12, pady=8,
+                        highlightbackground=BORDER, highlightthickness=1)
         acts.grid(row=4, column=0, sticky="we")
         self.btns = []
         for text, cmd, primary in (
@@ -303,19 +459,19 @@ class App(tk.Tk):
             self.btns.append(button)
         self.stop_btn = ttk.Button(acts, text="Stop", command=self._stop, state="disabled")
         self.stop_btn.pack(side="right")
-        policy = tk.Frame(self.body, bg=WHITE)
-        policy.grid(row=5, column=0, sticky="we", pady=(10, 8))
+        policy = tk.Frame(self.body, bg=LIGHT)
+        policy.grid(row=5, column=0, sticky="we", pady=(6, 4))
         tk.Label(policy, text="Till data saved first: postrans.dat + posdebtor.dat",
-                 bg=WHITE, fg=GREY, font=FONT_SMALL).pack(side="left")
+                 bg=LIGHT, fg=GREY, font=FONT_SMALL).pack(side="left")
         ttk.Button(policy, text="Open POS backups", command=self._open_backups).pack(side="right")
-        tk.Label(policy, text="Back-office backup: manual", bg=WHITE,
+        tk.Label(policy, text="Back-office backup: manual", bg=LIGHT,
                  fg=GREY, font=FONT_SMALL).pack(side="right", padx=14)
-        opts = tk.Frame(self.body, bg=WHITE)
-        opts.grid(row=6, column=0, sticky="we", pady=(0, 10))
+        opts = tk.Frame(self.body, bg=LIGHT)
+        opts.grid(row=6, column=0, sticky="we", pady=(0, 6))
         vnc = ttk.Button(opts, text="VNC shortcuts", command=self._vnc)
         vnc.pack(side="left", padx=(0, 14))
         self.btns.append(vnc)
-        tk.Label(opts, text="Till VNC password", bg=WHITE, fg=GREY,
+        tk.Label(opts, text="Till VNC password", bg=LIGHT, fg=GREY,
                  font=FONT_SMALL).pack(side="left")
         self.vnc_var = tk.StringVar(value=self.cfg["vnc_default"])
         entry = ttk.Entry(opts, textvariable=self.vnc_var, width=8)
@@ -326,18 +482,27 @@ class App(tk.Tk):
             variable=self.group_var, command=self._save_cfg).pack(side="left")
         self.bar = ttk.Progressbar(self.body, maximum=100)
         self.bar.grid(row=7, column=0, sticky="we")
-        self.body.rowconfigure(8, weight=1)
-        logf = tk.Frame(self.body, bg=WHITE)
-        logf.grid(row=8, column=0, sticky="nsew", pady=(10, 0))
-        self.log = tk.Text(logf, height=5, wrap="word", bg=LIGHT, fg=DARK,
-            relief="flat", bd=0, padx=10, pady=8, font=FONT_LOG, state="disabled")
-        sb = ttk.Scrollbar(logf, command=self.log.yview)
+        self.body.rowconfigure(8, weight=1, minsize=64)
+        logf = tk.Frame(self.body, bg=LIGHT)
+        logf.grid(row=8, column=0, sticky="nsew", pady=(8, 0))
+        tk.Label(logf, text="ACTIVITY", bg=LIGHT, fg=GREY,
+                 font=FONT_SMALL).pack(anchor="w", pady=(0, 4))
+        log_content = tk.Frame(logf, bg=WHITE)
+        log_content.pack(fill="both", expand=True)
+        self.log = tk.Text(log_content, height=2, wrap="word", bg=WHITE, fg=DARK,
+            relief="flat", bd=0, padx=10, pady=4, font=FONT_LOG, state="disabled")
+        sb = ttk.Scrollbar(log_content, command=self.log.yview)
         self.log.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.log.pack(fill="both", expand=True)
-        self.status_lbl = tk.Label(self, text="", bg=WHITE, fg=GREY,
+        footer = tk.Frame(self, bg=LIGHT)
+        # Reserve the footer before the expanding body at small window sizes.
+        footer.pack(side="bottom", fill="x", padx=24, pady=(0, 8), before=self.body)
+        tk.Label(footer, text=f"FREE FOR EVERYONE  /  v{VERSION}", bg=LIGHT,
+                 fg=GREY, font=FONT_SMALL).pack(side="right")
+        self.status_lbl = tk.Label(footer, text="", bg=LIGHT, fg=GREY,
                                    anchor="w", font=FONT_SMALL)
-        self.status_lbl.pack(fill="x", padx=22, pady=(0, 4))
+        self.status_lbl.pack(side="left", fill="x", expand=True)
         self.operation_controls = []
         def collect(widget):
             for child in widget.winfo_children():
@@ -393,6 +558,7 @@ class App(tk.Tk):
         return "all" if on == len(kids) else ("none" if on == 0 else "some")
 
     def _fill_tree(self, keep=None):
+        scroll = self.tree.yview()
         opened = {iid for iid in self.tree.get_children()
                   if self.tree.item(iid, "open")}
         first = not self.tree.get_children()
@@ -409,11 +575,14 @@ class App(tk.Tk):
             self._shop_status(i)
         if keep and self.tree.exists(keep):
             self.tree.selection_set(keep)
+            self.tree.focus(keep)
+        if scroll:
+            self.tree.yview_moveto(scroll[0])
         n = sum(1 for i in range(len(self.cfg["shops"]))
                 if self._shop_state(i) != "none")
-        self.count_lbl.config(
-            text=f"{n} of {len(self.cfg['shops'])} shop(s) have something "
-                 f"ticked")
+        targets = sum(self._ticked(i, k) for i in range(len(self.cfg["shops"]))
+                      for k, _label, _path in self._children(i))
+        self.count_lbl.config(text=f"{n} / {len(self.cfg['shops'])} shops  ·  {targets} destinations ticked")
 
     def _insert_row(self, i, sub, label, folder):
         key = f"{i}:{sub}"
@@ -423,6 +592,8 @@ class App(tk.Tk):
             if sub == "bo":
                 text = self.till_errors.get(store._norm(self.cfg["shops"][i]["bo_path"]), "")
         tag = ("ok",) if state == "ok" else (("bad",) if state else ())
+        if not self._selectable(i, sub):
+            tag = ("unavailable",)
         glyph = {"ok": "✔ ", "partial": "✖ ", "unreachable": "✖ "}.get(state, "")
         self.tree.insert(
             f"s{i}", "end", iid=key, text=label, tags=tag,
@@ -480,6 +651,7 @@ class App(tk.Tk):
             self.cfg["shops"][i]["off"] = sorted(off)
         self._save_cfg()
         self._fill_tree(keep=iid)
+        self.tree.focus_set()
         return "break"
 
     def _tree_double(self, event):
@@ -883,7 +1055,8 @@ class App(tk.Tk):
     def _log(self, text):
         self.log.config(state="normal")
         self.log.insert("end", f"{datetime.datetime.now():%H:%M:%S}  {text}\n")
-        self.log.see("end")
+        # Keep the newest message visible even when only one line fits.
+        self.log.see("end-2c")
         self.log.config(state="disabled")
         try:
             with open(os.path.join(store.data_dir(), "upgrade.log"), "a",
@@ -960,6 +1133,7 @@ class App(tk.Tk):
         self._save_cfg()
         if self.download_session:
             self.download_session.close()
+        self._dismiss_intro()
         self.destroy()
 
 

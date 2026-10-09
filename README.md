@@ -49,6 +49,12 @@ notes if you want to confirm the file.
 
 You can also drag the zip onto the exe icon to start with it loaded.
 
+The full Koenekt logo fades in and out briefly at startup. Click it or press
+Escape to continue immediately. The main window uses the supplied Koenekt and
+Vector logos, geometric accents and rounded tickboxes. A dash marks a partly
+ticked shop; grey boxes mark tills without a copy folder. Click a checkbox or
+select its row and press Space. The destination count updates with your ticks.
+
 **Close Vector on the PCs being upgraded first, and manually back up the back
 office.** Locked files are reported per row, not skipped silently.
 
@@ -90,6 +96,8 @@ read-only, settings go to
 
 Python 3.14 (Windows), tkinter included. No Python runtime dependencies.
 Get package needs an installed Microsoft Edge or Google Chrome browser.
+Brand PNGs in `assets/` are bundled into both portable EXEs. Preparing new
+brand assets uses Pillow only during development; see `assets/README.md`.
 
 ```
 python techtool_main.py                  # run from source

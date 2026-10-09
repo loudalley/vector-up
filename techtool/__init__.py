@@ -5,5 +5,5 @@ folders) on the window, then upgrade a till, a back office, a shop, or all of
 them, by plain file copy.
 """
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 APP_TITLE = "Vector-Up by Koenekt"
