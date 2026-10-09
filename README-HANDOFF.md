@@ -7,22 +7,26 @@ push, and tell the user.
 ## Current state
 
 - **Date / assistant:** 2026-10-09, Codex (GPT-6).
-- **Version:** 1.4.0. Both portable EXEs built locally in `dist/`; no 1.4.0
-  GitHub release published. Published release remains v1.2.0.
+- **Version:** 1.4.0. Both portable EXEs published as the latest GitHub release:
+  https://github.com/loudalley/vector-up/releases/tag/v1.4.0.
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
 - **Local:** `C:\Projects\koenekt-upgrade-tool`. Sister project not edited.
 
-### Latest handoff: GitHub push confirmation
+### Latest handoff: 1.4.0 release published
 
-- 2026-10-09, Codex (GPT-6): user requested a GitHub push. Fetched origin and
-  confirmed clean `master` already matched `origin/master` at `cfbf823`, the
-  1.4.0 branding/startup/tickbox commit. Verified VERSION and the corresponding
-  source/docs. Updated only this handoff note to record the check.
-- This turn: repository status and source checks passed; `git diff --check`
-  passed. No app tests or builds rerun for this documentation-only update.
-  Prior test results below remain historical. Real shops/tills remain untested;
-  no new release published. Next: review 1.4.0 and test one closed till as
-  described under **Exact next step** below.
+- 2026-10-09, Codex (GPT-6): user requested immediate release and push. Fetched
+  origin and confirmed clean synchronized master and VERSION 1.4.0. Published
+  existing tested builds as v1.4.0, tagged at `7d75c5e`, with SHA-256 release
+  notes. GitHub confirms both assets uploaded, matching sizes and hashes, a
+  public non-draft/non-prerelease release, and v1.4.0 as latest.
+- Release checks: both build logs successful; PE headers confirm x64/x86;
+  both archives contain all three brand PNGs; SHA-256 upload digests match.
+  `git diff --check` passed. No app tests or builds rerun; prior results below
+  remain historical. No real shop/till test. Next: download the appropriate
+  EXE and verify one closed test till as described below.
+- Published SHA-256:
+  - win64: `22726357DF9B0E8DF7E652943C2A192C7DC1ECA44D1D08B03918FF1C61647BEC`
+  - win32: `23C8AD1E0D3F0D10FAB3019095FFEF9D7B830A80E70288383331DC2692E6057F`
 
 ### Latest change: branding, startup animation and tickboxes
 
@@ -90,18 +94,24 @@ push, and tell the user.
 - Chrome fallback, restrictive browser policies and actual VNC shortcut launch.
 - Genuine package not rerun this turn; previous 1.3.1 genuine-package checks
   passed on both architectures. Physical 32-bit PC/high-DPI multi-monitor
-  transitions not tested. EXEs remain unsigned. No release published.
+  transitions not tested. EXEs remain unsigned.
 
 ### Exact next step
 
-Close the older upgrader and run `dist\VectorUp-1.4.0-win64.exe` (win32 on a
-32-bit PC). Review the startup fade and new tickboxes with your saved shops;
+Download `VectorUp-1.4.0-win64.exe` from the v1.4.0 release (win32 on a 32-bit
+PC), close the older upgrader and run it. Review the UI with your saved shops;
 click or press Escape to skip the intro. After manual BO backup and closing
 Vector on ONE test till, check the planned destination, upgrade it, and verify
 local POS backups and Vector's own next-start upgrade. Record live results
-here. Publish EXEs with SHA-256 notes when a release is requested.
+here. Both EXEs and SHA-256 notes are now published.
 
 ## Handoff log
+
+- **2026-10-09 - Codex (GPT-6), 1.4.0:** published latest GitHub release
+  v1.4.0 with both portable EXEs and SHA-256 notes. Verified build logs, PE
+  architectures, bundled branding, uploaded asset sizes/digests and latest
+  release status. Updated handoff only; diff check passed, no tests/builds
+  rerun and no real till test. Next: download and verify one closed test till.
 
 - **2026-10-09 - Codex (GPT-6), 1.4.0:** requested GitHub push confirmed the
   source commit `cfbf823` was already on origin/master. Updated this handoff
