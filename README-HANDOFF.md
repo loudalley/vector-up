@@ -12,6 +12,18 @@ push, and tell the user.
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
 - **Local:** `C:\Projects\koenekt-upgrade-tool`. Sister project not edited.
 
+### Latest handoff: GitHub push confirmation
+
+- 2026-10-09, Codex (GPT-6): user requested a GitHub push. Fetched origin and
+  confirmed clean `master` already matched `origin/master` at `cfbf823`, the
+  1.4.0 branding/startup/tickbox commit. Verified VERSION and the corresponding
+  source/docs. Updated only this handoff note to record the check.
+- This turn: repository status and source checks passed; `git diff --check`
+  passed. No app tests or builds rerun for this documentation-only update.
+  Prior test results below remain historical. Real shops/tills remain untested;
+  no new release published. Next: review 1.4.0 and test one closed till as
+  described under **Exact next step** below.
+
 ### Latest change: branding, startup animation and tickboxes
 
 - Modern light surface/dark green header, original full Koenekt logo,
@@ -90,6 +102,12 @@ local POS backups and Vector's own next-start upgrade. Record live results
 here. Publish EXEs with SHA-256 notes when a release is requested.
 
 ## Handoff log
+
+- **2026-10-09 - Codex (GPT-6), 1.4.0:** requested GitHub push confirmed the
+  source commit `cfbf823` was already on origin/master. Updated this handoff
+  note only; repository/source checks and diff whitespace check passed. No
+  tests/builds rerun, no real till test and no release published. Next: review
+  1.4.0, then verify one closed test till's backups/copy/Vector upgrade.
 
 - **2026-10-09 - Codex (GPT-6), 1.4.0:** original Koenekt/Vector branding,
   full-logo startup fade with click/Escape dismissal, rounded antialiased ticks,
