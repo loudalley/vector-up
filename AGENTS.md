@@ -53,6 +53,23 @@ the user MUST be told. This is not optional and not only for big changes.
   Mention which assistant made the change in the message or handoff entry.
 - Read `git status` before every `git add`. Avoid `git add -A` blindly.
 
+## Branches and releases (two lines of the app, both usable)
+
+The owner wants the original app AND the multi-back-office spin-off available,
+and either usable:
+
+| Line | Branch | Release tags | What it is |
+|---|---|---|---|
+| Original | `original-1.4` | `v1.4.0` | Vector-Up as first published: shops, tills, one back office per shop. Fixes only. |
+| Spin-off | `multi-backoffice` | `v1.5.0`+ | Adds extra back offices and Find back offices. |
+
+`master` currently points at the same commit as `multi-backoffice` (the latest).
+Do NOT move or reset `master`, and do not force-push any branch, without the
+owner saying so - ask first. Releases are cut from the branch they belong to:
+bump `VERSION`, `build_portable.bat`, `gh release create vX.Y.Z` with both EXEs
+and SHA-256 in the notes. A fix that belongs to both lines goes on
+`original-1.4` first, then is merged or cherry-picked into `multi-backoffice`.
+
 ## PUBLIC repo - what must never be committed
 
 - **No credentials or secrets** of any kind. The standard till VNC password
@@ -140,6 +157,15 @@ the user MUST be told. This is not optional and not only for big changes.
 - `tests/check_techtool_gui.py` posts real `WM_DROPFILES` messages. A real drag
   from Explorer has **not** been verified yet.
 - Settings JSON is read with `utf-8-sig` (Notepad adds a BOM) - keep that.
+- **1.5 and 1.4.x share one settings folder, so `shops.json` must stay in the
+  1.4.x shape.** 1.4.x rebuilds every shop from a fixed key set on each load and
+  save and silently deletes any other key (verified against the real v1.4.0
+  code). Anything 1.5 adds per shop (extra back offices, their id counter) lives
+  in `shops_extra.json`, keyed by `store._norm(bo_path)`, which 1.4.x never
+  touches. Never put a new per-shop or top-level key into `shops.json`; add it
+  to the companion file. `tests/test_compat_14.py` runs the genuine v1.4.0 code
+  from the git tag against a 1.5 folder - keep it passing (it skips if the tag
+  is missing, which is not a pass).
 
 ## Theming / UI edits (the user will do this in several tools)
 

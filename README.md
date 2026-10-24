@@ -126,6 +126,17 @@ PC. POS backups are also kept under that folder. If the exe's folder is
 read-only, settings go to
 `%LOCALAPPDATA%\Koenekt\VectorUp` instead.
 
+## Using 1.5 and the original 1.4 side by side
+
+1.5 adds extra back offices and *Find back offices*; 1.4.0 is the original
+without them. Both are on the [releases page](../../releases) and you can keep
+either. They can even share one settings folder: they see the same shop list.
+1.5 keeps extra back offices in a separate file, `shops_extra.json`, because
+1.4 rewrites `shops.json` from a fixed set of fields every time it runs and
+would silently delete anything else in it. Opening, editing or closing 1.4 on
+that folder therefore cannot erase your extra back offices - 1.4 just does not
+show them. (If 1.4 renames a shop's folder, its extras no longer attach to it.)
+
 ## Build from source
 
 Python 3.14 (Windows), tkinter included. No Python runtime dependencies.
@@ -146,9 +157,13 @@ Set `KUT_REAL_ZIP` to a genuine Vector package to run the extra test against it.
 ## Status
 
 Tested: package unpacking against a real Vector package, 20-shop copy runs on
-local folders, per-till / per-back-office targeting, window drag-and-drop using
-posted `WM_DROPFILES` messages, both frozen exes starting and unpacking.
-Not yet verified on real tills: a drag straight from Explorer and a copy to a
-live shop share. Try one till first.
+local folders, per-till / per-back-office / extra-back-office targeting, finding
+back-office folders (against made-up folders and fakes, plus the real Windows
+share-listing call on one PC), sharing a settings folder with the genuine 1.4.0
+code, window drag-and-drop using posted `WM_DROPFILES` messages, both frozen
+exes starting and unpacking.
+Not yet verified on real shops: a drag straight from Explorer, a copy to a
+live shop share, and *Find back offices* on a real server or network. Try one
+till, and one shop's scan, first.
 
 MIT licensed. © Koenekt (Pty) Ltd.

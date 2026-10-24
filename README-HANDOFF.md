@@ -6,17 +6,49 @@ push, and tell the user.
 
 ## Current state
 
-- **Date / assistant:** 2026-10-24, Claude (extra back offices + discovery).
-- **Version:** 1.4.0 is the latest RELEASE (both portable EXEs):
-  https://github.com/loudalley/vector-up/releases/tag/v1.4.0. The source on
-  `master` is AHEAD of it: it adds extra back offices and Find back offices
-  (below). `VERSION` is
-  still 1.4.0 and no new EXEs were built or published. Bump `VERSION` (1.5.0
-  suggested) and release when the user asks.
+- **Date / assistant:** 2026-10-24, Claude (release 1.5.0).
+- **Version:** 1.5.0 is the latest RELEASE (both portable EXEs):
+  https://github.com/loudalley/vector-up/releases/tag/v1.5.0. It is the
+  multi-back-office spin-off line. The ORIGINAL line is 1.4.0
+  (https://github.com/loudalley/vector-up/releases/tag/v1.4.0); both stay
+  available and either can be used.
+- **Two lines / branches:** `original-1.4` (the original, tag `v1.4.0`,
+  fixes only) and `multi-backoffice` (the 1.5 line, tag `v1.5.0`). `master`
+  currently points at the same commit as `multi-backoffice`. The owner asked
+  for the spin-off to be a branch "so we can use either"; whether `master`
+  should go back to the original line is THEIR call and would rewrite public
+  history - do not move `master` without being told (see AGENTS.md).
+- **SHA-256 (1.5.0):**
+  - win64 `C1BE66E0598FEAC7EF2A04E540413A02D0B3EF99D67062EE3E89CCFA99704FCB`
+  - win32 `6260355FEA06C07119033FA9C175444AF92590577AA186F9BD70550DD6CCBE9E`
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
 - **Local:** `C:\Projects\koenekt-upgrade-tool`. Sister project not edited.
 
-### Latest change (unreleased): extra back offices + Find back offices
+### Using 1.5 and the original 1.4.x side by side (settings are shared)
+
+PROBLEM FOUND: the original 1.4.0 rebuilds every shop from a fixed key set on
+each load/save and silently deletes any other key - verified by running the
+real v1.4.0 code on a 1.5 `shops.json` (extras gone). Sharing one settings
+folder would have wiped a technician's extra back offices without a word.
+
+FIX (in 1.5.0): `shops.json` keeps exactly the 1.4.x shape; extra back offices
+and their id counter are stored in a companion file `shops_extra.json`
+(`store.save` / `store.load`), keyed by `store._norm(bo_path)`, which 1.4.x
+never reads or writes. Both versions see the same shop list; 1.4.x simply does
+not show extras and cannot erase them. Behaviours worth knowing:
+- A shop removed in 1.4 and re-added at the same folder gets its extras back
+  (the companion entry is untouched until 1.5 next saves).
+- If 1.4 changes a shop's folder, its extras no longer attach (matched by
+  folder). 1.5 drops the orphan entry on its next save.
+- A damaged companion file loads as "no extras" and is copied to
+  `shops_extra.json.bad` before being overwritten.
+- Early dev builds that wrote `extra_bo` inline still load and migrate.
+- `tests/test_compat_14.py` (15 tests) runs the GENUINE v1.4.0 code, exported
+  from the git tag into a temp folder and run in a subprocess, against a 1.5
+  folder: open/close, edit + add a shop, remove, remove + re-add, id reuse. It
+  skips (not passes) if the tag is missing.
+
+### 1.5.0: extra back offices + Find back offices (the spin-off line)
 
 The owner's layout (told to us 2026-10-24, treat as ground truth):
 
@@ -90,6 +122,14 @@ means it has its own data, and `AdminDataDirectory` ties a secondary to its shop
   the test now calls `focus_force()` first. The app was not at fault.
 - Visually inspected the real window with extras and the Find dialog (fixed a
   stray progress-bar block and a clipped note while doing so).
+- Release checks (1.5.0): all unit suites OK (`test_techtool` 64 - also run
+  with the real Vector package, nothing skipped - `test_extra_bo` 26,
+  `test_discovery` 37, `test_compat_14` 15); window check passed twice; both
+  frozen EXEs (win64 14 MB, win32 11.1 MB) started from a fresh folder with a
+  seeded settings folder (1.4-shaped `shops.json` + `shops_extra.json`), showed
+  "Back office 2 / 3" loaded from the companion file, and opened the real
+  package. The frozen EXEs were NOT driven through Find back offices (the
+  dialog was tested from source).
 - NOT verified: any of this against a real shop network. The real share
   listing was only run on this PC (it has one share) and a missing host; the
   subnet sweep, listing a real server's shares, and `VectorAdminLocal.ini`
@@ -98,8 +138,10 @@ means it has its own data, and `AdminDataDirectory` ties a secondary to its shop
   office dump. Whether Vector upgrades secondary copies correctly or needs an
   order/version match across back offices. The right-click popup itself.
 - Next: the user tries Find back offices on ONE real shop's server and reports
-  what it finds (and what it misses); then release as 1.5.0 (bump `VERSION`,
-  `build_portable.bat`, `gh release create`) when the user asks.
+  what it finds (and what it misses). Open question for the owner: should
+  `master` stay as the latest (= the 1.5 line) or go back to the original, with
+  the spin-off only on `multi-backoffice`? (Both are already preserved as
+  branches and tags either way.)
 
 ### Latest handoff: 1.4.0 release published
 
@@ -195,6 +237,17 @@ local POS backups and Vector's own next-start upgrade. Record live results
 here. Both EXEs and SHA-256 notes are now published.
 
 ## Handoff log
+
+- **2026-10-24 - Claude, 1.5.0 released (spin-off line):** version bumped,
+  both EXEs built and published as `v1.5.0` with SHA-256 notes. Created
+  branches `original-1.4` (at the 1.4.0 commit) and `multi-backoffice` (the 1.5
+  line); `master` unchanged. Before releasing, found that the original 1.4.0
+  silently erases extra back offices from `shops.json`, so extras now live in
+  `shops_extra.json` and 1.4.x and 1.5 can share one settings folder; new
+  `tests/test_compat_14.py` proves it with the genuine 1.4.0 code. Unit tests
+  142 OK, window check 2/2, both frozen EXEs smoke-tested. Not tried on a real
+  shop network or real tills. Next: try Find back offices on one real server;
+  owner to say whether `master` should revert to the original line.
 
 - **2026-10-24 - Claude, unreleased (after 1.4.0), part 2:** Find back offices.
   The owner explained the layouts (main server = working folder is data folder,

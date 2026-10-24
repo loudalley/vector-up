@@ -4,6 +4,16 @@ A shop here is only what an upgrade needs: a name, the back-office folder
 (the one holding Ramset.dat and VectorTerminals.ini - the till list is read
 from that INI, never typed in) and, if the shop differs from the standard, its
 own till VNC password.
+
+COMPATIBILITY WITH 1.4.x. The original 1.4.x rebuilds every shop from a fixed
+set of keys each time it loads and saves, so any extra key written into
+shops.json is silently deleted the next time 1.4.x runs on the same folder.
+Extra back offices (1.5) therefore live in a companion file,
+shops_extra.json, keyed by the shop's back-office folder, which 1.4.x never
+reads or writes. shops.json keeps exactly the 1.4.x shape, so the two versions
+can share one settings folder: they see the same shops, and 1.4.x cannot erase
+what only 1.5 knows about. Keep it that way: never put a key into shops.json
+that 1.4.x would drop.
 """
 import atexit
 import json
@@ -198,11 +208,45 @@ def _check_extra_duplicate(shop, path, own_id):
             raise ValueError(f"Already listed as \"{x['name']}\".")
 
 
+def _extra_path(p):
+    """Companion file for extra back offices: shops.json -> shops_extra.json."""
+    return os.path.splitext(p)[0] + "_extra.json"
+
+
+def _read_json(path):
+    with open(path, "r", encoding="utf-8-sig") as f:  # Notepad adds a BOM
+        return json.load(f)
+
+
+def _read_extras(p):
+    """{normalised back-office folder: {"extra_bo": [...], "extra_seq": n}}."""
+    try:
+        raw = _read_json(_extra_path(p))
+    except (OSError, ValueError):
+        return {}
+    shops = raw.get("shops") if isinstance(raw, dict) else None
+    return shops if isinstance(shops, dict) else {}
+
+
+def _merge_extras(shop, side):
+    """Attach a companion-file entry to a shop; it wins over anything inline."""
+    if not isinstance(side, dict):
+        return
+    extras = _clean_extras(side.get("extra_bo"))
+    try:
+        seq = int(side.get("extra_seq") or 0)
+    except (TypeError, ValueError):
+        seq = 0
+    shop["extra_bo"] = extras
+    shop["extra_seq"] = max([seq, shop.get("extra_seq", 0)]
+                            + [x["id"] for x in extras])
+
+
 def load(path=None):
     cfg = {"shops": [], "vnc_default": DEFAULT_VNC, "group_shortcuts": True}
+    p = _path(path)
     try:
-        with open(_path(path), "r", encoding="utf-8-sig") as f:  # Notepad BOM
-            raw = json.load(f)
+        raw = _read_json(p)
     except (OSError, ValueError):
         return cfg
     if isinstance(raw, dict):
@@ -215,15 +259,47 @@ def load(path=None):
                     str(s.get("vnc_password") or ""),
                     s.get("selected", True), s.get("off"),
                     s.get("extra_bo"), s.get("extra_seq", 0)))
+    # Extras from the companion file. (An inline extra_bo in shops.json can
+    # only come from an early 1.5 development build; it still loads, and the
+    # next save moves it to the companion file.)
+    side = _read_extras(p)
+    for shop in cfg["shops"]:
+        if shop["bo_path"]:
+            _merge_extras(shop, side.get(_norm(shop["bo_path"])))
     return cfg
 
 
-def save(cfg, path=None):
-    p = _path(path)
-    tmp = p + ".tmp"
+def _write_json(path, data):
+    tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
-    os.replace(tmp, p)
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+def save(cfg, path=None):
+    """Write shops.json in the 1.4.x shape and the extras to shops_extra.json."""
+    p = _path(path)
+    side, plain = {}, []
+    for s in cfg.get("shops", []):
+        plain.append({k: v for k, v in s.items()
+                      if k not in ("extra_bo", "extra_seq")})
+        if (s.get("extra_bo") or s.get("extra_seq")) and s.get("bo_path"):
+            side[_norm(s["bo_path"])] = {
+                "shop": s.get("name", ""),  # for a human reading the file
+                "extra_bo": s.get("extra_bo") or [],
+                "extra_seq": s.get("extra_seq", 0)}
+    ep = _extra_path(p)
+    if side or os.path.exists(ep):
+        if os.path.exists(ep):
+            try:
+                _read_json(ep)
+            except (OSError, ValueError):  # keep a damaged file, do not erase it
+                try:
+                    shutil.copy2(ep, ep + ".bad")
+                except OSError:
+                    pass
+        _write_json(ep, {"version": 1, "shops": side})
+    _write_json(p, dict(cfg, shops=plain))
     return p
 
 
