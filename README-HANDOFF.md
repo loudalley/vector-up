@@ -6,19 +6,30 @@ push, and tell the user.
 
 ## Current state
 
-- **Date / assistant:** 2026-10-24, Claude (extra back offices, step 1).
+- **Date / assistant:** 2026-10-24, Claude (extra back offices + discovery).
 - **Version:** 1.4.0 is the latest RELEASE (both portable EXEs):
   https://github.com/loudalley/vector-up/releases/tag/v1.4.0. The source on
-  `master` is AHEAD of it: it adds extra back offices (below). `VERSION` is
+  `master` is AHEAD of it: it adds extra back offices and Find back offices
+  (below). `VERSION` is
   still 1.4.0 and no new EXEs were built or published. Bump `VERSION` (1.5.0
   suggested) and release when the user asks.
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
 - **Local:** `C:\Projects\koenekt-upgrade-tool`. Sister project not edited.
 
-### Latest change (unreleased): extra back offices, added by hand
+### Latest change (unreleased): extra back offices + Find back offices
 
-Why: some shops have a second, third or fourth back-office PC, each with its
-own RP_BACK program folder that also needs the upgrade.
+The owner's layout (told to us 2026-10-24, treat as ground truth):
+
+- **Main server:** RP_BACK.exe runs from the SAME folder that holds the data
+  (`Ramset.dat`). Several such back offices can sit on ONE machine in folders
+  named anything (`Liquor`, `Retail Liq`...). Each is its OWN SHOP in the list.
+- **Secondary back offices:** run RP_BACK.exe from their OWN folder, but their
+  `VectorAdminLocal.ini` `AdminDataDirectory` points at the main server's data.
+  They need the new files in their own folder on EVERY upgrade, so each is an
+  EXTRA back office of the shop whose data it uses.
+
+So folder names mean nothing: `RP_BACK.exe` marks a program folder, `Ramset.dat`
+means it has its own data, and `AdminDataDirectory` ties a secondary to its shop.
 
 - A shop can list extra back offices (`shop["extra_bo"]` = `{id, name, path}`).
   **Add back office** button, or right-click a shop / its main Back office row.
@@ -41,32 +52,54 @@ own RP_BACK program folder that also needs the upgrade.
   duplicate detection in the planner and in Reporter import. `store._norm` now
   strips it and `engine.build_plan` uses it. POS-backup fingerprints still use
   the old normpath on purpose (changing it would rename existing backup folders).
-- **Detection is NOT built.** Finding RP_BACK folders automatically is the
-  planned step 2 (read `AlternateBoDir` in `VectorAdmin.ini`; list shares on the
-  back-office server and same-subnet hosts via NetShareEnum and look for
-  `RP_BACK.exe`; confirm by reading that folder's `VectorAdminLocal.ini`
-  `AdminDataDirectory`, which should point at the shop's data folder). Unknown:
-  whether the user's multi-back-office shops run their own local RP_BACK copy
-  per PC or all launch one shared folder (then nothing extra to upgrade). The
-  only shop dump on hand is single-back-office (`BackOfficeMode=0`,
-  `AlternateBoDir` empty). A `VectorAdmin.ini` + `VectorAdminLocal.ini` from a
-  real multi-back-office shop would settle it (settings only, no data).
-- Tests: new `tests/test_extra_bo.py` (26 tests: store, planning, real copies,
-  unreachable/locked extras, folder inspection, trailing-slash regression).
-  `tests/test_techtool.py` 64 OK (1 real-package skip). `tests/check_techtool_gui.py`
-  extended and driving the real window and the real dialogs: add two extras
-  with folder-check hints, duplicate refusal, one extra only, unticked extra
-  skipped, ALL includes them, shop edit keeps them, edit/remove, id never
-  reused, tick box click, and the new button visible at minimum size. It passed
-  3 of 3 re-runs; its first run failed once on the existing Escape-dismisses-
-  intro assertion (keyboard focus dependent, unrelated to this change).
-  Visually inspected the real window with extra back offices.
-- NOT verified: against a real multi-back-office shop; real shares; whether
-  Vector upgrades the extra copies correctly or needs a particular order or
-  version match across back offices; the right-click context menu itself (its
-  code paths are exercised, the popup is not driven).
-- Next: user to confirm how their multi-back-office shops are laid out, then
-  either release this as 1.5.0 or build step 2 (detection).
+- **Find back offices** (`techtool/discovery.py`, `FindBackOfficesDialog`;
+  toolbar button, or right-click a shop / its main Back office row):
+  - Scans the chosen shop's SERVER: lists its disk shares (NetShareEnum level 1
+    via ctypes - no admin rights; admin shares like `C$` are left out), walks
+    each share to depth 2 with a 25 s limit per host, looks for `RP_BACK.exe`
+    (case-insensitive, skips Logs/Backup/POS_Data_Preparation/hidden shares).
+  - Classifies each hit: `own` (has `Ramset.dat`) -> offered as a NEW SHOP;
+    `secondary` (its `VectorAdminLocal.ini` data dir matches a listed shop,
+    compared with `store._norm`) -> that shop's EXTRA back office; `unclear`
+    (no ini, a drive-letter data dir, or an unlisted shop) -> shown, unticked,
+    adds as an extra of the shop the scan started from; `listed` -> greyed.
+  - **"Also scan this shop's network..."** is separate and asks first every
+    time: one TCP connect to port 445 on each address of the server's /24, then
+    the same share listing on the PCs that answer. Read-only; never beyond the
+    /24; no credentials stored. Local-path shops have no server to scan and say so.
+  - Adding: new shops get the folder name (with the host appended if a shop of
+    that name exists); a found shop reads its own tills and upgrades like any
+    other. Re-adding is refused with a reason.
+  - Only SHARED folders can be found. An unshared folder, a PC that is off, or
+    SMB blocked by a firewall/VPN is simply not seen; add those by hand.
+- Tests: `tests/test_extra_bo.py` 26 OK (store, planning, real copies,
+  unreachable/locked extras, folder inspection, trailing-slash regression);
+  `tests/test_discovery.py` 37 OK (UNC parsing, folder walk incl. depth /
+  skip-dirs / deadline / cancel, ini reading incl. BOM and ANSI, classification,
+  a real-folder "one machine, several back offices" layout, discover() with
+  fakes, subnet sweep with an injected connect, plus the REAL NetShareEnum call
+  on this PC and on a missing host); `tests/test_techtool.py` 64 OK (1 real-
+  package skip). `tests/check_techtool_gui.py` drives the real window and the
+  real dialogs: extras (add/duplicate/one row/unticked/ALL/edit/remove/ids/tick
+  box), then Find back offices with a fake scan (kinds sorted, listed row not
+  tickable, two-step scan with the network confirm, add as shop / extra, the
+  found shop reads its tills and upgrades, re-adding refused) and the new
+  buttons visible at minimum size. 6/6 passes after the fix below.
+- Test flake fixed: the old "Escape dismisses the startup logo" assertion needs
+  keyboard focus and failed whenever another window had it (2 of ~9 runs);
+  the test now calls `focus_force()` first. The app was not at fault.
+- Visually inspected the real window with extras and the Find dialog (fixed a
+  stray progress-bar block and a clipped note while doing so).
+- NOT verified: any of this against a real shop network. The real share
+  listing was only run on this PC (it has one share) and a missing host; the
+  subnet sweep, listing a real server's shares, and `VectorAdminLocal.ini`
+  contents from a real secondary back office are only covered by fakes and
+  made-up files - the ini key/section layout is taken from one single-back-
+  office dump. Whether Vector upgrades secondary copies correctly or needs an
+  order/version match across back offices. The right-click popup itself.
+- Next: the user tries Find back offices on ONE real shop's server and reports
+  what it finds (and what it misses); then release as 1.5.0 (bump `VERSION`,
+  `build_portable.bat`, `gh release create`) when the user asks.
 
 ### Latest handoff: 1.4.0 release published
 
@@ -162,6 +195,18 @@ local POS backups and Vector's own next-start upgrade. Record live results
 here. Both EXEs and SHA-256 notes are now published.
 
 ## Handoff log
+
+- **2026-10-24 - Claude, unreleased (after 1.4.0), part 2:** Find back offices.
+  The owner explained the layouts (main server = working folder is data folder,
+  several can share one machine under names like Liquor / Retail Liq = separate
+  shops; secondary back offices have their own program folder pointing at the
+  main server's data and need the files on every upgrade = extras). Built
+  `techtool/discovery.py` + `FindBackOfficesDialog`: scans the shop's server
+  (read-only), classifies new shop / extra / unclear / listed, optional
+  confirmed subnet sweep. New `tests/test_discovery.py` (37 OK); extras 26 OK;
+  `test_techtool.py` 64 OK; window check 6/6 (also fixed a focus flake in its
+  old Escape test). No EXEs built or released; VERSION unchanged. NOT tried on
+  any real shop network. Next: try it on one real server, then release 1.5.0.
 
 - **2026-10-24 - Claude, unreleased (after 1.4.0):** extra back offices added by
   hand (second/third/fourth RP_BACK folders) as ordinary BO targets with their

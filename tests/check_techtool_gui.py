@@ -117,6 +117,11 @@ def main():
         # Dismissal must cancel its timer and release images without stale callbacks.
         app._start_intro()
         app.update()
+        # A key event only reaches a window that has keyboard focus. Without
+        # forcing it, this assertion fails whenever another window (a browser,
+        # a terminal) has the focus - the test, not the app, was at fault.
+        app.focus_force()
+        app.update()
         app.event_generate("<Escape>")
         app.update()
         assert app._intro is None and not app._intro_after, "Escape did not dismiss startup logo"
@@ -169,6 +174,11 @@ def main():
                 yield from walk(c)
         bo_btn = [w for w in walk(app) if w.winfo_class() == "TButton"
                   and w.cget("text") == "Add back office"]
+        find_btn = [w for w in walk(app) if w.winfo_class() == "TButton"
+                    and w.cget("text") == "Find back offices"]
+        assert find_btn and find_btn[0].winfo_ismapped(), "Find button hidden"
+        assert find_btn[0].winfo_rootx() + find_btn[0].winfo_width() <= \
+            app.winfo_rootx() + app.winfo_width(), "Find button clipped"
         assert bo_btn and bo_btn[0].winfo_ismapped(), "Add back office button hidden"
         assert bo_btn[0].winfo_rootx() + bo_btn[0].winfo_width() <= \
             app.winfo_rootx() + app.winfo_width(), "Add back office button clipped"
@@ -367,6 +377,122 @@ def main():
         assert app._ticked(0, "b1") != before
         app._toggle_tick(iid)  # leave it ticked
         print("tick box on an extra back office row: OK")
+
+        # --- Find back offices: one server hosting several back offices
+        from techtool import discovery
+        server = work / "server"
+        liquor = server / "Liquor"
+        retail = server / "Retail Liq"
+        till_l = server / "liquor_till"
+        for f in (liquor, retail):
+            f.mkdir(parents=True)
+            (f / "RP_BACK.exe").write_text("old")
+            (f / "Ramset.dat").write_text("own data")
+        till_l.mkdir()
+        (till_l / "postrans.dat").write_text("t")
+        (till_l / "posdebtor.dat").write_text("d")
+        (liquor / "VectorTerminals.ini").write_text(
+            f"[TERMINAL 1]\nName=LIQUOR TILL\nEnabled=True\n"
+            f"TerminalLocation={till_l}\n", encoding="utf-8")
+        secondary = work / "shop0" / "liquor_pc"
+        mystery = work / "shop1" / "mystery"
+        for f in (secondary, mystery):
+            f.mkdir(parents=True)
+            (f / "RP_BACK.exe").write_text("old")
+        scans = []
+
+        def cand(path, kind, idx, note, name=None, host="SERVER"):
+            return {"path": str(path), "name": name or Path(path).name,
+                    "kind": kind, "shop_index": idx, "note": note, "host": host}
+
+        base = [
+            cand(liquor, discovery.OWN, None, "has its own Ramset.dat - another shop"),
+            cand(retail, discovery.OWN, None, "has its own Ramset.dat - another shop"),
+            cand(secondary, discovery.SECONDARY, 0, "uses Shop 0 renamed's data"),
+            cand(mystery, discovery.UNCLEAR, 1, "uses data at X, not a listed shop"),
+            cand(cfg_s[2]["bo_path"], discovery.LISTED, 2, "already listed as Shop 2"),
+        ]
+        far = base + [cand(work / "far_pc", discovery.SECONDARY, 0,
+                           "uses Shop 0 renamed's data", host="10.0.5.30")]
+
+        def fake_discover(shops, start, network=False, cancel=None, emit=None, **k):
+            scans.append((start, network))
+            if emit:
+                emit("status", "Looking at SERVER...")
+            return {"candidates": far if network else base, "hosts": [],
+                    "notes": ["1 other PC(s) answered."] if network else []}
+
+        def interact():
+            dlg = dialog(gui.FindBackOfficesDialog)
+
+            def step():
+                if dlg.scanning:
+                    return app.after(100, step)
+                assert len(dlg.cands) == 5 and dlg.ticked == {0, 1, 2}, dlg.ticked
+                rows = {i: dlg.tree.item(str(i), "values") for i in range(5)}
+                assert rows[0][3] == "New shop" and rows[1][3] == "New shop"
+                assert rows[2][3] == "Back office of Shop 0 renamed", rows[2]
+                assert rows[3][3] == "Back office of Shop 1", rows[3]
+                assert rows[4][0] == "" and rows[4][3] == "", rows[4]  # listed: no tick
+                dlg._toggle("4")                       # a listed row cannot be ticked
+                assert 4 not in dlg.ticked
+                dlg._toggle("3")                       # tick the unclear one
+                dlg._toggle("1")                       # untick Retail Liq
+                assert dlg.ticked == {0, 2, 3}
+                dlg._network()                         # ask for the wider scan
+                again()
+            step()
+
+        def again():
+            dlg = dialog(gui.FindBackOfficesDialog)
+
+            def wait():
+                if dlg.scanning:
+                    return app.after(100, wait)
+                assert len(dlg.cands) == 6 and scans[-1][1] is True, scans
+                assert "answered" in dlg.notes.cget("text")
+                assert dlg.ticked == {0, 1, 2, 5}, dlg.ticked  # fresh defaults
+                dlg._toggle("1")                       # leave Retail Liq out
+                dlg._toggle("5")                       # and the far PC
+                dlg._add()
+            wait()
+
+        shops_before = len(app.cfg["shops"])
+        app.tree.selection_set("s1")
+        with patch.object(gui.discovery, "discover", fake_discover):
+            app.after(300, interact)
+            app._find_back_offices()
+        assert scans == [(1, False), (1, True)], scans
+        names = [x["name"] for x in app.cfg["shops"]]
+        assert len(names) == shops_before + 1 and names[-1] == "Liquor", names
+        assert "Retail Liq" not in names
+        extras0 = [x["name"] for x in app.cfg["shops"][0]["extra_bo"]]
+        assert "liquor_pc" in extras0 and "far_pc" not in extras0, extras0
+        assert any(x["path"] == str(secondary) for x in app.cfg["shops"][0]["extra_bo"])
+        assert not any(x["path"] == str(mystery) for x in app.cfg["shops"][1]["extra_bo"]), \
+            "an unticked-by-default row was added"
+        new_i = len(app.cfg["shops"]) - 1
+        saved = store.load()["shops"]
+        assert saved[new_i]["name"] == "Liquor" and saved[new_i]["bo_path"] == str(liquor)
+        print("Find back offices: two-step scan, kinds sorted, ticks, add as shop/extra: OK")
+
+        # the found shop is a real shop: its tills load and it upgrades
+        assert wait_for(app, lambda: app.tree.exists(f"{new_i}:t1")), "found shop's till not read"
+        app.tree.selection_set(f"{new_i}:t1")
+        app._upgrade("row")
+        assert wait_for(app, lambda: not app.busy and app.status.get(f"{new_i}:t1"))
+        assert has(str(till_l)) and not has(str(liquor))
+        app.tree.selection_set(f"{new_i}:bo")
+        app._upgrade("row")
+        assert wait_for(app, lambda: not app.busy and app.status.get(f"{new_i}:bo"))
+        assert has(str(liquor)) and (liquor / "Ramset.dat").read_text() == "own data"
+        print("a found shop reads its tills and upgrades (till, then back office): OK")
+
+        # adding the same findings again changes nothing and says why
+        again_new, again_extra, skipped = app._apply_found(1, [base[0], base[2]])
+        assert (again_new, again_extra) == ([], 0) and len(skipped) == 2, skipped
+        assert "already a shop" in skipped[0] and "Already listed" in skipped[1]
+        print("re-adding found folders is refused, not duplicated: OK")
 
         # --- a junk drop is refused, the loaded package survives
         junk = work / "junk.zip"

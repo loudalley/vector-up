@@ -15,7 +15,8 @@ from tkinter import filedialog, messagebox, ttk, font as tkfont
 from . import terminals as vector_terminals
 from . import tillops
 
-from . import APP_TITLE, VERSION, dnd, downloads, engine, package, store
+from . import (APP_TITLE, VERSION, discovery, dnd, downloads, engine, package,
+               store)
 
 GREEN = "#73C509"
 DARK = "#17251F"
@@ -114,6 +115,221 @@ class ShopDialog(tk.Toplevel):
         self.destroy()
 
 
+class FindBackOfficesDialog(tk.Toplevel):
+    """Scan a shop's server for back-office folders and add the ones you pick.
+
+    Read-only: it lists folders and reads two small settings files. It returns
+    the ticked candidates in self.result; the caller adds them.
+    """
+
+    ADD_AS = {discovery.OWN: "New shop", discovery.SECONDARY: "Back office of",
+              discovery.UNCLEAR: "Back office of", discovery.LISTED: ""}
+
+    def __init__(self, parent, cfg, shop_index, run=None):
+        super().__init__(parent)
+        self.title("Find back offices")
+        self.transient(parent)
+        self.configure(bg=WHITE, padx=16, pady=14)
+        self.minsize(900, 460)
+        self.cfg, self.start = cfg, shop_index
+        self.run = run or discovery.discover
+        self.result = None
+        self.cands = []
+        self.ticked = set()
+        self.cancel_flag = False
+        self.scanning = False
+        self.q = queue.Queue()
+        shop = cfg["shops"][shop_index]
+        server = (discovery.parse_unc(shop["bo_path"]) or ("this PC",))[0]
+
+        tk.Label(self, text=f"Looking for back offices on {server}",
+                 bg=WHITE, fg=DARK, font=FONT_SECTION).pack(anchor="w")
+        tk.Label(self, bg=WHITE, fg=GREY, font=FONT_SMALL, justify="left",
+                 wraplength=860,
+                 text="Finds folders holding RP_BACK.exe, whatever they are "
+                      "called. A folder with its own Ramset.dat is another "
+                      "shop; one that uses a listed shop's data is that "
+                      "shop's extra back office. Nothing is changed on any PC."
+                 ).pack(anchor="w", pady=(2, 8))
+        self.status = tk.Label(self, text="", bg=WHITE, fg=GREY, font=FONT)
+        self.status.pack(anchor="w")
+        self.bar = ttk.Progressbar(self, mode="indeterminate")
+        self.bar.pack(fill="x", pady=(4, 8))
+
+        frame = tk.Frame(self, bg=WHITE)
+        frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(
+            frame, columns=("tick", "path", "what", "addas"), show="headings",
+            height=9, selectmode="browse")
+        for col, text, w, stretch in (("tick", "", 34, False),
+                                      ("path", "Folder", 240, True),
+                                      ("what", "What it is", 400, True),
+                                      ("addas", "Add as", 170, False)):
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=w, stretch=stretch,
+                             anchor="center" if col == "tick" else "w")
+        self.tree.tag_configure("listed", foreground=DISABLED)
+        sb = ttk.Scrollbar(frame, command=self.tree.yview)
+        self.tree.config(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<Button-1>", self._click)
+        self.tree.bind("<space>", self._space)
+
+        self.notes = tk.Label(self, text="", bg=WHITE, fg=GREY, font=FONT_SMALL,
+                              justify="left", wraplength=860)
+        self.notes.pack(anchor="w", pady=(6, 0))
+        bar = tk.Frame(self, bg=WHITE)
+        bar.pack(fill="x", pady=(10, 0))
+        self.net_btn = ttk.Button(bar, text="Also scan this shop's network...",
+                                  command=self._network)
+        self.net_btn.pack(side="left")
+        self.stop_btn = ttk.Button(bar, text="Stop", command=self._stop,
+                                   state="disabled")
+        self.stop_btn.pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text="Close", command=self.destroy).pack(side="right")
+        self.add_btn = ttk.Button(bar, text="Add ticked", command=self._add,
+                                  state="disabled")
+        self.add_btn.pack(side="right", padx=(0, 8))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<Destroy>", lambda e: setattr(self, "cancel_flag", True)
+                  if e.widget is self else None)
+        self._scan(network=False)
+        self.after(100, self._pump)
+        self.grab_set()
+        self.wait_window(self)
+
+    # ---- scanning
+    def _scan(self, network):
+        self.scanning = True
+        self.cancel_flag = False
+        self.cands, self.ticked = [], set()
+        self._fill()
+        self.notes.config(text="")
+        self.bar.config(mode="indeterminate")
+        self.bar.start(12)
+        self.net_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.add_btn.config(state="disabled")
+        self.status.config(text="Starting...")
+
+        def work():
+            try:
+                out = self.run(
+                    self.cfg["shops"], self.start, network=network,
+                    cancel=lambda: self.cancel_flag,
+                    emit=lambda kind, text: self.q.put(("status", text)))
+            except Exception as e:  # a scan must never take the app down
+                out = {"candidates": [], "hosts": [],
+                       "notes": [f"The scan failed: {e}"]}
+            self.q.put(("done", out))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _network(self):
+        net = discovery.parse_unc(self.cfg["shops"][self.start]["bo_path"])
+        where = f"the same network as {net[0]}" if net else "this network"
+        if not messagebox.askyesno(
+                APP_TITLE,
+                f"Scan {where} for other PCs that share folders?\n\n"
+                "It makes one quick connection to each address on the shop's "
+                "network (about 250), then lists the shared folders of the "
+                "PCs that answer and reads two small settings files. It "
+                "changes nothing, but security software may notice it.\n\n"
+                "Only do this on the shop's own network.",
+                default="no", parent=self):
+            return
+        self._scan(network=True)
+
+    def _stop(self):
+        self.cancel_flag = True
+        self.stop_btn.config(state="disabled")
+        self.status.config(text="Stopping...")
+
+    def _pump(self):
+        try:
+            while True:
+                kind, data = self.q.get_nowait()
+                if kind == "status":
+                    self.status.config(text=data)
+                else:
+                    self._finish(data)
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return  # closed
+        try:
+            self.after(100, self._pump)
+        except tk.TclError:
+            pass
+
+    def _finish(self, out):
+        self.scanning = False
+        self.bar.stop()
+        self.bar.config(mode="determinate", value=0)
+        self.net_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.cands = out["candidates"]
+        self.ticked = {i for i, c in enumerate(self.cands)
+                       if c["kind"] in (discovery.OWN, discovery.SECONDARY)}
+        self._fill()
+        new = sum(1 for c in self.cands if c["kind"] != discovery.LISTED)
+        self.status.config(
+            text=(f"Found {new} back office folder(s) not in your list."
+                  if new else "Nothing new found."))
+        notes = list(out["notes"])
+        if not self.cands:
+            notes.append("A back office is only visible if its folder is "
+                         "shared on the network. If it is not, or the PC is "
+                         "off, add it by hand with Add back office.")
+        self.notes.config(text="\n".join(notes))
+
+    # ---- list
+    def _label(self, c):
+        if c["kind"] == discovery.OWN:
+            return "New shop"
+        if c["kind"] == discovery.LISTED:
+            return ""
+        i = c["shop_index"]
+        return f"Back office of {self.cfg['shops'][i]['name']}"
+
+    def _fill(self):
+        self.tree.delete(*self.tree.get_children())
+        for i, c in enumerate(self.cands):
+            listed = c["kind"] == discovery.LISTED
+            self.tree.insert(
+                "", "end", iid=str(i), tags=("listed",) if listed else (),
+                values=("" if listed else ("☑" if i in self.ticked else "☐"),
+                        c["path"], c["note"], self._label(c)))
+        self.add_btn.config(state="normal" if self.ticked and not self.scanning
+                            else "disabled")
+
+    def _toggle(self, iid):
+        if not iid or self.scanning:
+            return
+        i = int(iid)
+        if self.cands[i]["kind"] == discovery.LISTED:
+            return
+        self.ticked.symmetric_difference_update({i})
+        self._fill()
+        self.tree.selection_set(iid)
+
+    def _click(self, event):
+        self._toggle(self.tree.identify_row(event.y))
+        return "break"
+
+    def _space(self, _event):
+        sel = self.tree.selection()
+        if sel:
+            self._toggle(sel[0])
+        return "break"
+
+    def _add(self):
+        self.result = [self.cands[i] for i in sorted(self.ticked)]
+        self.destroy()
+
+
 class BackOfficeDialog(tk.Toplevel):
     """Add or edit an extra back office (a second, third, ... RP_BACK folder)."""
 
@@ -146,8 +362,9 @@ class BackOfficeDialog(tk.Toplevel):
         ttk.Button(self, text="Browse...", command=self._browse).grid(
             row=3, column=2, padx=(6, 0))
         tk.Label(self, text="The folder that PC runs RP_BACK.exe from, shared on "
-                            "the network, e.g. \\\\OFFICE2\\RP_BACK. It gets the "
-                            "same back-office files as the main back office.",
+                            "the network, e.g. \\\\OFFICE2\\Liquor. The folder can be "
+                            "called anything. It gets the same back-office "
+                            "files as the main back office.",
                  bg=WHITE, fg=GREY, font=FONT_SMALL, wraplength=420,
                  justify="left").grid(row=4, column=1, columnspan=2, sticky="w")
         check = tk.Frame(self, bg=WHITE)
@@ -568,6 +785,7 @@ class App(tk.Tk):
         for text, cmd in (("Add shop", self._add_shop), ("Edit", self._edit_shop),
                           ("Remove", self._remove_shop),
                           ("Add back office", self._add_extra_bo),
+                          ("Find back offices", self._find_back_offices),
                           ("Refresh tills", self._refresh_tills)):
             ttk.Button(shopbar, text=text, command=cmd).pack(side="left", padx=(0, 6))
         more = ttk.Menubutton(shopbar, text="More")
@@ -838,6 +1056,8 @@ class App(tk.Tk):
         if sub is None or sub == "bo":
             self.menu.add_command(label="Add another back office...",
                                   command=self._add_extra_bo)
+            self.menu.add_command(label="Find back offices on this server...",
+                                  command=self._find_back_offices)
         if sub is not None and store.is_extra_key(sub):
             self.menu.add_separator()
             self.menu.add_command(label="Edit this back office...",
@@ -918,6 +1138,58 @@ class App(tk.Tk):
         self._fill_tree(keep=f"{i}:{store.extra_key(x['id'])}")
         self.tree.item(f"s{i}", open=True)
         self._log(f"{shop['name']}: added {x['name']} ({x['path']}).")
+
+    def _find_back_offices(self):
+        if self.busy or self.loading:
+            return
+        i = self._shop_index()
+        if i is None:
+            return messagebox.showinfo(
+                APP_TITLE, "Click a shop in the list first. Its server is "
+                           "the one that gets scanned.")
+        d = FindBackOfficesDialog(self, self.cfg, i)
+        if not d.result:
+            return
+        added_shops, added_extra, skipped = self._apply_found(i, d.result)
+        self._save_cfg()
+        self._fill_tree(keep=f"s{i}")
+        for n in added_shops:
+            if self.tree.exists(f"s{n}"):
+                self.tree.item(f"s{n}", open=True)
+        self.tree.item(f"s{i}", open=True)
+        self._log(f"Find back offices: {len(added_shops)} new shop(s), "
+                  f"{added_extra} extra back office(s) added"
+                  + (f", {len(skipped)} skipped." if skipped else "."))
+        for line in skipped:
+            self._log(f"  skipped: {line}")
+        if added_shops:
+            self._refresh_tills()
+
+    def _apply_found(self, start, candidates):
+        """Add ticked candidates. Returns (new shop indexes, extras, skipped)."""
+        shops = self.cfg["shops"]
+        new_shops, extras, skipped = [], 0, []
+        for c in candidates:
+            try:
+                if c["kind"] == discovery.OWN:
+                    if len(shops) >= store.MAX_SHOPS:
+                        raise ValueError("that is the shop limit")
+                    if any(store._norm(s["bo_path"]) == store._norm(c["path"])
+                           for s in shops):
+                        raise ValueError("already a shop")
+                    name = c["name"]
+                    if any(s["name"].lower() == name.lower() for s in shops):
+                        name = f"{name} ({c['host']})"
+                    shops.append(store.new_shop(name, c["path"]))
+                    new_shops.append(len(shops) - 1)
+                else:
+                    target = shops[c["shop_index"] if c["shop_index"] is not None
+                                   else start]
+                    store.add_extra_bo(target, c["name"], c["path"])
+                    extras += 1
+            except ValueError as e:
+                skipped.append(f"{c['path']}: {e}")
+        return new_shops, extras, skipped
 
     def _extra_from_iid(self, iid):
         i, sub = iid.split(":")

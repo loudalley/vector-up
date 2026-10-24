@@ -75,15 +75,33 @@ the user MUST be told. This is not optional and not only for big changes.
 - BO files -> each shop's back-office folder; POS files -> each till folder read
   from that shop's `VectorTerminals.ini`. Per till, per back office, per shop,
   ticked, or ALL. **Nothing is ever deleted at a destination.**
-- **Extra back offices** (a shop's second, third... RP_BACK program folder) are
-  added by hand (`store.add_extra_bo`, `BackOfficeDialog`). They are plain BO
-  targets: same BO payload, same marker-last rule, row keys `<shop>:b<id>`
-  (main is `bo`, tills are `t<n>`). Their `id` is stable and NEVER reused
-  (`extra_seq` only grows) so a stale tick/result cannot land on another back
-  office. Compare folders with `store._norm` (it strips the trailing slash on
-  UNC share roots); never `os.path.normpath` alone. A drive-letter path for a
-  remote shop's extra back office must warn: it would copy onto this PC.
-  Automatic detection of these folders is NOT built yet (see the handoff note).
+- **Two kinds of "more than one back office"** (the owner's layout, 2026-10-24):
+  (1) the MAIN SERVER runs RP_BACK.exe from the same folder as the data
+  (`Ramset.dat`); several such back offices can sit on one machine in folders
+  named anything (`Liquor`, `Retail Liq`) - each is its OWN SHOP in the list.
+  (2) SECONDARY back offices run RP_BACK.exe from their own folder but their
+  `VectorAdminLocal.ini` `AdminDataDirectory` points at the main server's data.
+  They need the new files in their own folder on EVERY upgrade - each is an
+  EXTRA back office of the shop whose data it uses. Never identify either by
+  folder name: `RP_BACK.exe` is the marker, `Ramset.dat` means own data.
+- **Extra back offices** (`store.add_extra_bo`, `BackOfficeDialog`, or found by
+  `FindBackOfficesDialog`) are plain BO targets: same BO payload, same
+  marker-last rule, row keys `<shop>:b<id>` (main is `bo`, tills are `t<n>`).
+  Their `id` is stable and NEVER reused (`extra_seq` only grows) so a stale
+  tick/result cannot land on another back office. Compare folders with
+  `store._norm` (it strips the trailing slash on UNC share roots); never
+  `os.path.normpath` alone. A drive-letter path for a remote shop's extra back
+  office must warn: it would copy onto this PC.
+- **Discovery (`techtool/discovery.py`) is read-only and opt-in.** It only
+  lists folders and reads `VectorAdminLocal.ini`; it must never write to, or
+  copy onto, a scanned machine. Step one scans only the chosen shop's own
+  server (NetShareEnum level 1 + a depth-2 walk with a time limit). The subnet
+  sweep (TCP 445 to the server's /24) runs only after an explicit confirm each
+  time, and never beyond that /24. Never store credentials; use the Windows
+  session the user already has. A found folder is classified `own` (has
+  Ramset.dat: new shop), `secondary` (its data dir matches a listed shop: that
+  shop's extra), `unclear` (shown, unticked), or `listed` (already in the list,
+  not selectable). Only SHARED folders can be found.
 - Till folders can be UNC shares, or absolute drive folders for a local
   back-office installation. Never apply a remote shop's drive path to the
   technician PC. Named tills without copy folders must remain visible with a

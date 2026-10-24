@@ -30,16 +30,39 @@ notes if you want to confirm the file.
    selected for copying. A drive path inside a remote shop's INI is never
    treated as a folder on the technician's PC; remote tills need UNC paths.
 
-   **Shops with more than one back office.** Click the shop (or its main
-   *Back office* row) and press **Add back office** (or right-click, *Add another
-   back office...*). Give it a name and the folder that PC runs `RP_BACK.exe`
-   from, shared on the network (for example `\\OFFICE2\RP_BACK`). *Check folder*
-   tells you whether it is reachable and holds `RP_BACK.exe`. Each extra back
-   office appears under the main one as *Back office 2, 3, 4...* with its own
-   tick and result, gets exactly the same back-office files, and can be
-   upgraded alone, ticked, or with the whole shop. Double-click one to edit it;
-   right-click to remove it from the list (nothing on that PC is touched).
-   There is no automatic detection of these folders yet: you add them by hand.
+   **Shops with more than one back office.** There are two layouts, and they
+   are handled differently:
+
+   - *The main server* runs `RP_BACK.exe` from the same folder that holds the
+     data (`Ramset.dat`). Several such back offices can sit on one machine,
+     in folders called anything (`Liquor`, `Retail Liq`...). Each is **its own
+     shop** in the list.
+   - *Secondary back offices* run `RP_BACK.exe` from their own folder but point
+     at the main server's data (`AdminDataDirectory` in their
+     `VectorAdminLocal.ini`). They need the new files in their own folder on
+     every upgrade, so each is an **extra back office** of the shop whose data
+     it uses.
+
+   **Find back offices** (button, or right-click a shop) scans that shop's
+   server for folders holding `RP_BACK.exe` - the folder name does not matter -
+   and sorts what it finds: a folder with its own `Ramset.dat` is offered as a
+   *New shop*; one that uses a listed shop's data is offered as a *Back office
+   of* that shop; one it cannot place is shown unticked. Tick what you want and
+   press *Add ticked*. *Also scan this shop's network...* additionally looks at
+   the other PCs on the shop's network (one quick connection to each address on
+   the same /24, then lists the shared folders of the PCs that answer). It only
+   lists folders and reads two small settings files - it never writes to
+   anything - but it asks first because security software may notice it. A back
+   office can only be found if its folder is **shared** on the network.
+
+   **Add back office** adds one by hand (also right-click a shop, *Add another
+   back office...*): give it a name and the shared folder that PC runs
+   `RP_BACK.exe` from (for example `\\OFFICE2\Liquor`); *Check folder* tells you
+   whether it is reachable and holds `RP_BACK.exe`. Each extra back office
+   appears under the main one as *Back office 2, 3, 4...* with its own tick and
+   result, gets exactly the same back-office files, and can be upgraded alone,
+   ticked, or with the whole shop. Double-click one to edit it; right-click to
+   remove it from the list (nothing on that PC is touched).
 2. **Get or drop Vector's upgrade zip** (the one containing `BO\` and `POS\` folders)
    on the window. It is unpacked and sorted for you. `Utilities\` and
    `InstallationNotes.txt` are never copied. **Get package** opens
