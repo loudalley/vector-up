@@ -2,11 +2,14 @@
 
 Per shop:
   POS -> the till shares found in that shop's VectorTerminals.ini
-  BO  -> the shop's back-office folder (the one holding Ramset.dat)
+  BO  -> the shop's back-office folder (the one holding Ramset.dat), plus any
+         EXTRA back offices the technician listed (a second, third, ... RP_BACK
+         program folder). They get exactly the same BO files as the main one.
 
 Any subset can be chosen: one till, one back office, a whole shop, everything.
 A shop dict may carry  want_bo (default True)  and  want_tills (None = every
-till, else a set of terminal numbers)  and  _idx  (its row in the window).
+till, else a set of terminal numbers)  and  want_extra (None = every extra
+back office, else a set of their ids)  and  _idx  (its row in the window).
 
 A target is checked for reachability before anything is copied: a mistyped
 path must not turn into a stray folder, and a dead till must not cost one
@@ -58,9 +61,36 @@ def backup_pos_data(target, root, stamp):
     return folder
 
 
-def target_key(shop, kind, till=None):
+def target_key(shop, kind, till=None, extra=None):
     idx = shop.get("_idx", shop.get("name"))
+    if extra is not None:
+        return f"{idx}:{store.extra_key(extra)}"
     return f"{idx}:bo" if kind == BO else f"{idx}:t{till}"
+
+
+def extra_label(position, extra):
+    """Row label for an extra back office; the main one is number 1."""
+    return f"Back office {position} - {extra['name']}"
+
+
+def inspect_bo_folder(path):
+    """What is at a back-office folder, for the Add back office dialog.
+
+    Returns {reachable, has_exe, exe, has_data}. May block on a dead network
+    path, so call it from a worker thread. Read-only.
+    """
+    out = {"reachable": False, "has_exe": False, "exe": "", "has_data": False}
+    try:
+        if not os.path.isdir(path):
+            return out
+        out["reachable"] = True
+        names = {n.lower(): n for n in os.listdir(path)}
+    except OSError:
+        return out
+    if "rp_back.exe" in names:
+        out["has_exe"], out["exe"] = True, names["rp_back.exe"]
+    out["has_data"] = "ramset.dat" in names
+    return out
 
 
 def build_plan(shops, do_pos, do_bo):
@@ -72,7 +102,7 @@ def build_plan(shops, do_pos, do_bo):
     targets, warnings, seen = [], [], set()
 
     def add(key, shop, kind, label, dest):
-        dup = (kind, os.path.normpath(dest).lower())
+        dup = (kind, store._norm(dest))
         if dup in seen:
             return
         seen.add(dup)
@@ -88,6 +118,12 @@ def build_plan(shops, do_pos, do_bo):
             continue
         if do_bo and s.get("want_bo", True):
             add(target_key(s, BO), name, BO, "Back office", bo_path)
+        want_extra = s.get("want_extra")
+        if do_bo and want_extra != set():
+            for n, x in enumerate(s.get("extra_bo") or [], start=2):
+                if want_extra is None or x["id"] in want_extra:
+                    add(target_key(s, BO, extra=x["id"]), name, BO,
+                        extra_label(n, x), x["path"])
         if do_pos and (want_tills is None or want_tills):
             info = vector_terminals.read_terminals(bo_path)
             if not info.get("available"):

@@ -8,6 +8,7 @@ own till VNC password.
 import atexit
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -16,6 +17,7 @@ from . import tillops
 
 DEFAULT_VNC = tillops.VNC_PASSWORD
 MAX_SHOPS = 50  # the field has 20; this only stops a runaway import
+MAX_EXTRA_BO = 20  # extra back offices per shop
 
 
 PORTABLE_FOLDER = "VectorUp_data"
@@ -94,11 +96,106 @@ def _path(path=None):
     return path or os.path.join(data_dir(), "shops.json")
 
 
-def new_shop(name="", bo_path="", vnc_password="", selected=True, off=None):
-    """off: destinations the technician has unticked, e.g. ["bo", "t3"]."""
+def _clean_extras(raw):
+    """Valid extra back offices only: [{"id": int, "name": str, "path": str}]."""
+    out, seen = [], set()
+    for x in raw or []:
+        if not isinstance(x, dict):
+            continue
+        path = str(x.get("path") or "").strip()
+        try:
+            xid = int(x.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if not path or xid in seen:
+            continue
+        seen.add(xid)
+        out.append({"id": xid, "name": str(x.get("name") or "").strip() or path,
+                    "path": path})
+    return out
+
+
+def new_shop(name="", bo_path="", vnc_password="", selected=True, off=None,
+             extra_bo=None, extra_seq=0):
+    """off: destinations the technician has unticked, e.g. ["bo", "t3", "b2"].
+
+    extra_bo: further back offices of the same shop (a second, third, ...
+    RP_BACK program folder), each with a stable id. extra_seq only ever grows,
+    so a removed id is never handed out again - a stale untick or result keyed
+    on it can never land on a different back office.
+    """
+    extras = _clean_extras(extra_bo)
+    seq = max([int(extra_seq or 0)] + [x["id"] for x in extras])
     return {"name": name.strip(), "bo_path": bo_path.strip(),
             "vnc_password": vnc_password.strip(), "selected": bool(selected),
-            "off": [str(k) for k in (off or [])]}
+            "off": [str(k) for k in (off or [])],
+            "extra_bo": extras, "extra_seq": seq}
+
+
+# Row keys inside a shop: "bo" main back office, "t<n>" till n,
+# "b<id>" an extra back office.
+def extra_key(extra_id):
+    return f"b{int(extra_id)}"
+
+
+def is_extra_key(sub):
+    return len(sub) > 1 and sub[0] == "b" and sub[1:].isdigit()
+
+
+def extra_id(sub):
+    return int(sub[1:])
+
+
+def find_extra(shop, extra_id_):
+    return next((x for x in shop.get("extra_bo") or []
+                 if x["id"] == int(extra_id_)), None)
+
+
+def add_extra_bo(shop, name, path):
+    """Add a back office to a shop. Raises ValueError with a message to show."""
+    path = (path or "").strip()
+    if not path:
+        raise ValueError("Enter the back-office folder.")
+    if len(shop.get("extra_bo") or []) >= MAX_EXTRA_BO:
+        raise ValueError(f"That is the limit of {MAX_EXTRA_BO} extra back "
+                         f"offices for one shop.")
+    _check_extra_duplicate(shop, path, None)
+    shop.setdefault("extra_bo", [])
+    shop["extra_seq"] = max(int(shop.get("extra_seq") or 0),
+                            *[x["id"] for x in shop["extra_bo"]], 0) + 1
+    extra = {"id": shop["extra_seq"], "name": (name or "").strip() or path,
+             "path": path}
+    shop["extra_bo"].append(extra)
+    return extra
+
+
+def update_extra_bo(shop, extra_id_, name, path):
+    path = (path or "").strip()
+    x = find_extra(shop, extra_id_)
+    if x is None:
+        raise ValueError("That back office no longer exists.")
+    if not path:
+        raise ValueError("Enter the back-office folder.")
+    _check_extra_duplicate(shop, path, x["id"])
+    x["name"] = (name or "").strip() or path
+    x["path"] = path
+    return x
+
+
+def remove_extra_bo(shop, extra_id_):
+    """Remove it from the list (nothing on the PC is touched) and forget its tick."""
+    shop["extra_bo"] = [x for x in shop.get("extra_bo") or []
+                        if x["id"] != int(extra_id_)]
+    shop["off"] = [k for k in shop.get("off") or []
+                   if k != extra_key(extra_id_)]
+
+
+def _check_extra_duplicate(shop, path, own_id):
+    if _norm(path) == _norm(shop.get("bo_path")):
+        raise ValueError("That is this shop's main back-office folder.")
+    for x in shop.get("extra_bo") or []:
+        if x["id"] != own_id and _norm(x["path"]) == _norm(path):
+            raise ValueError(f"Already listed as \"{x['name']}\".")
 
 
 def load(path=None):
@@ -116,7 +213,8 @@ def load(path=None):
                 cfg["shops"].append(new_shop(
                     str(s.get("name") or ""), str(s.get("bo_path") or ""),
                     str(s.get("vnc_password") or ""),
-                    s.get("selected", True), s.get("off")))
+                    s.get("selected", True), s.get("off"),
+                    s.get("extra_bo"), s.get("extra_seq", 0)))
     return cfg
 
 
@@ -136,7 +234,13 @@ def vnc_password_for(cfg, shop):
 
 
 def _norm(p):
-    return os.path.normpath((p or "").strip()).lower()
+    """A comparison key for a folder path: same folder, same key.
+
+    normpath keeps a trailing backslash on a UNC share root (\\\\pc\\share\\)
+    but not on \\\\pc\\share, so strip it or the same folder typed two ways
+    would look like two folders.
+    """
+    return os.path.normpath((p or "").strip()).lower().rstrip("\\/")
 
 
 def reporter_config_paths():
@@ -188,3 +292,8 @@ def import_from_reporter(cfg, paths=None):
             cfg["vnc_default"] = vnc
         return added, skipped, p
     return 0, 0, None
+
+
+def is_drive_path(path):
+    """A drive-letter path (C:\\..., Z:\\...) as opposed to a UNC share."""
+    return bool(re.match(r"^[A-Za-z]:[\\/]", (path or "").strip()))

@@ -29,6 +29,17 @@ notes if you want to confirm the file.
    `TerminalLocation` remain visible with a status message and cannot be
    selected for copying. A drive path inside a remote shop's INI is never
    treated as a folder on the technician's PC; remote tills need UNC paths.
+
+   **Shops with more than one back office.** Click the shop (or its main
+   *Back office* row) and press **Add back office** (or right-click, *Add another
+   back office...*). Give it a name and the folder that PC runs `RP_BACK.exe`
+   from, shared on the network (for example `\\OFFICE2\RP_BACK`). *Check folder*
+   tells you whether it is reachable and holds `RP_BACK.exe`. Each extra back
+   office appears under the main one as *Back office 2, 3, 4...* with its own
+   tick and result, gets exactly the same back-office files, and can be
+   upgraded alone, ticked, or with the whole shop. Double-click one to edit it;
+   right-click to remove it from the list (nothing on that PC is touched).
+   There is no automatic detection of these folders yet: you add them by hand.
 2. **Get or drop Vector's upgrade zip** (the one containing `BO\` and `POS\` folders)
    on the window. It is unpacked and sorted for you. `Utilities\` and
    `InstallationNotes.txt` are never copied. **Get package** opens

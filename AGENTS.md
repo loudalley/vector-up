@@ -75,6 +75,15 @@ the user MUST be told. This is not optional and not only for big changes.
 - BO files -> each shop's back-office folder; POS files -> each till folder read
   from that shop's `VectorTerminals.ini`. Per till, per back office, per shop,
   ticked, or ALL. **Nothing is ever deleted at a destination.**
+- **Extra back offices** (a shop's second, third... RP_BACK program folder) are
+  added by hand (`store.add_extra_bo`, `BackOfficeDialog`). They are plain BO
+  targets: same BO payload, same marker-last rule, row keys `<shop>:b<id>`
+  (main is `bo`, tills are `t<n>`). Their `id` is stable and NEVER reused
+  (`extra_seq` only grows) so a stale tick/result cannot land on another back
+  office. Compare folders with `store._norm` (it strips the trailing slash on
+  UNC share roots); never `os.path.normpath` alone. A drive-letter path for a
+  remote shop's extra back office must warn: it would copy onto this PC.
+  Automatic detection of these folders is NOT built yet (see the handoff note).
 - Till folders can be UNC shares, or absolute drive folders for a local
   back-office installation. Never apply a remote shop's drive path to the
   technician PC. Named tills without copy folders must remain visible with a

@@ -114,6 +114,140 @@ class ShopDialog(tk.Toplevel):
         self.destroy()
 
 
+class BackOfficeDialog(tk.Toplevel):
+    """Add or edit an extra back office (a second, third, ... RP_BACK folder)."""
+
+    def __init__(self, parent, shop, extra=None):
+        super().__init__(parent)
+        self.title("Back office")
+        self.transient(parent)
+        self.resizable(False, False)
+        self.configure(bg=WHITE, padx=16, pady=14)
+        self.result = None
+        self.shop = shop
+        self.own_id = extra["id"] if extra else None
+        self.checked = None  # last engine.inspect_bo_folder result
+        self.name = tk.StringVar(value=extra["name"] if extra else "")
+        self.path = tk.StringVar(value=extra["path"] if extra else "")
+
+        tk.Label(self, text=f"Shop: {shop['name']}", bg=WHITE, fg=DARK,
+                 font=FONT_STRONG).grid(row=0, column=0, columnspan=3,
+                                         sticky="w", pady=(0, 6))
+        tk.Label(self, text="Name", bg=WHITE, fg=DARK, font=FONT).grid(
+            row=1, column=0, sticky="w", pady=4)
+        first = ttk.Entry(self, textvariable=self.name, width=48)
+        first.grid(row=1, column=1, sticky="we", padx=(8, 0))
+        tk.Label(self, text="e.g. Manager's PC, Stock room", bg=WHITE, fg=GREY,
+                 font=FONT_SMALL).grid(row=2, column=1, columnspan=2, sticky="w")
+        tk.Label(self, text="Back-office folder", bg=WHITE, fg=DARK,
+                 font=FONT).grid(row=3, column=0, sticky="w", pady=4)
+        entry = ttk.Entry(self, textvariable=self.path, width=48)
+        entry.grid(row=3, column=1, sticky="we", padx=(8, 0))
+        ttk.Button(self, text="Browse...", command=self._browse).grid(
+            row=3, column=2, padx=(6, 0))
+        tk.Label(self, text="The folder that PC runs RP_BACK.exe from, shared on "
+                            "the network, e.g. \\\\OFFICE2\\RP_BACK. It gets the "
+                            "same back-office files as the main back office.",
+                 bg=WHITE, fg=GREY, font=FONT_SMALL, wraplength=420,
+                 justify="left").grid(row=4, column=1, columnspan=2, sticky="w")
+        check = tk.Frame(self, bg=WHITE)
+        check.grid(row=5, column=1, columnspan=2, sticky="w", pady=(8, 0))
+        self.check_btn = ttk.Button(check, text="Check folder", command=self._check)
+        self.check_btn.pack(side="left")
+        self.hint = tk.Label(check, text="", bg=WHITE, fg=GREY, font=FONT_SMALL,
+                             wraplength=330, justify="left")
+        self.hint.pack(side="left", padx=(8, 0))
+        bar = tk.Frame(self, bg=WHITE)
+        bar.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(bar, text="Save", command=self._save).pack(
+            side="right", padx=(0, 8))
+        self.bind("<Return>", lambda _e: self._save())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.path.trace_add("write", lambda *_a: self._forget_check())
+        first.focus_set()
+        self.grab_set()
+        self.wait_window(self)
+
+    def _browse(self):
+        d = filedialog.askdirectory(parent=self, title="Back-office folder")
+        if d:
+            self.path.set(os.path.normpath(d))
+            self._check()
+
+    def _forget_check(self):
+        self.checked = None
+        self.hint.config(text="", fg=GREY)
+
+    def _check(self):
+        path = self.path.get().strip()
+        if not path:
+            self.hint.config(text="Enter a folder first.", fg=GREY)
+            return
+        self.hint.config(text="Checking...", fg=GREY)
+        self.check_btn.config(state="disabled")
+        box = {}
+
+        def work():
+            box["r"] = engine.inspect_bo_folder(path)
+
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+
+        def poll():
+            try:
+                if t.is_alive():
+                    self.after(150, poll)
+                    return
+                self.check_btn.config(state="normal")
+                if self.path.get().strip() != path:
+                    return  # edited meanwhile; the answer is stale
+                self.checked = r = box["r"]
+                if not r["reachable"]:
+                    self.hint.config(fg=RED, text="Cannot reach that folder now "
+                                     "(PC off, no access, or wrong path). It can "
+                                     "still be saved.")
+                elif r["has_exe"]:
+                    self.hint.config(fg=SUCCESS, text=f"Found {r['exe']} - this "
+                                     "looks like a back-office program folder.")
+                else:
+                    self.hint.config(fg=RED, text="Reachable, but no RP_BACK.exe "
+                                     "here. Is this the program folder?")
+            except tk.TclError:
+                pass  # dialog closed while checking
+
+        poll()
+
+    def _save(self):
+        path = self.path.get().strip()
+        try:  # validate against a copy so a refusal changes nothing
+            probe = {"name": self.shop["name"], "bo_path": self.shop["bo_path"],
+                     "extra_bo": [dict(x) for x in self.shop.get("extra_bo") or []]}
+            if self.own_id is None:
+                store.add_extra_bo(probe, self.name.get(), path)
+            else:
+                store.update_extra_bo(probe, self.own_id, self.name.get(), path)
+        except ValueError as e:
+            messagebox.showwarning(APP_TITLE, str(e), parent=self)
+            return
+        if store.is_drive_path(path) and not store.is_drive_path(self.shop["bo_path"]):
+            if not messagebox.askyesno(
+                    APP_TITLE,
+                    f"{path} is a drive on THIS PC (or a mapped drive), not a "
+                    "folder on the shop's PC. Files would be copied here.\n\n"
+                    "For a remote back office use its network path "
+                    "(\\\\PC\\share).\n\nUse this path anyway?",
+                    default="no", parent=self):
+                return
+        if self.checked and self.checked["reachable"] and not self.checked["has_exe"]:
+            if not messagebox.askyesno(
+                    APP_TITLE, "No RP_BACK.exe was found in that folder.\n\n"
+                               "Add it anyway?", default="no", parent=self):
+                return
+        self.result = {"name": self.name.get().strip() or path, "path": path}
+        self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self, initial=None, *, animate=True):
         super().__init__()
@@ -432,7 +566,9 @@ class App(tk.Tk):
         shopbar = tk.Frame(self.body, bg=LIGHT)
         shopbar.grid(row=3, column=0, sticky="we", pady=(6, 8))
         for text, cmd in (("Add shop", self._add_shop), ("Edit", self._edit_shop),
-                          ("Remove", self._remove_shop), ("Refresh tills", self._refresh_tills)):
+                          ("Remove", self._remove_shop),
+                          ("Add back office", self._add_extra_bo),
+                          ("Refresh tills", self._refresh_tills)):
             ttk.Button(shopbar, text=text, command=cmd).pack(side="left", padx=(0, 6))
         more = ttk.Menubutton(shopbar, text="More")
         menu = tk.Menu(more, tearoff=0)
@@ -535,19 +671,23 @@ class App(tk.Tk):
         """[(key, label, folder)] for one shop: its back office, then tills."""
         s = self.cfg["shops"][i]
         rows = [("bo", "Back office", s["bo_path"])]
+        for n, x in enumerate(s.get("extra_bo") or [], start=2):
+            rows.append((store.extra_key(x["id"]), engine.extra_label(n, x),
+                         x["path"]))
         for t in self.tills.get(store._norm(s["bo_path"])) or []:
             rows.append((f"t{t['number']}", t.get("name") or
                          f"Terminal {t['number']}", t.get("share") or t.get("location") or ""))
         return rows
 
     def _till(self, i, sub):
-        if sub == "bo":
+        if sub == "bo" or store.is_extra_key(sub):
             return None
         return next((t for t in self.tills.get(store._norm(self.cfg["shops"][i]["bo_path"])) or []
                      if sub == f"t{t['number']}"), None)
 
     def _selectable(self, i, sub):
-        return sub == "bo" or bool((self._till(i, sub) or {}).get("share"))
+        return (sub == "bo" or store.is_extra_key(sub)
+                or bool((self._till(i, sub) or {}).get("share")))
 
     def _ticked(self, i, sub):
         return self._selectable(i, sub) and sub not in self.cfg["shops"][i].get("off", [])
@@ -656,9 +796,12 @@ class App(tk.Tk):
 
     def _tree_double(self, event):
         iid = self.tree.identify_row(event.y)
-        if iid and iid.startswith("s") and \
-                "image" not in self.tree.identify_element(event.x, event.y):
+        if not iid or "image" in self.tree.identify_element(event.x, event.y):
+            return
+        if iid.startswith("s"):
             self._edit_shop()
+        elif store.is_extra_key(iid.split(":")[1]):
+            self._edit_extra(iid)
 
     def _tick_all(self, state):
         for s in self.cfg["shops"]:
@@ -681,15 +824,26 @@ class App(tk.Tk):
             return
         self.tree.selection_set(iid)
         self.menu.delete(0, "end")
-        what = ("shop" if iid.startswith("s") else
-                "back office" if iid.endswith(":bo") else "till")
+        sub = None if iid.startswith("s") else iid.split(":")[1]
+        what = ("shop" if sub is None else
+                "back office" if sub == "bo" or store.is_extra_key(sub)
+                else "till")
         self.menu.add_command(label=f"Upgrade this {what} only",
                               command=lambda: self._upgrade("row"))
         self.menu.add_command(label="Open folder in Explorer",
                               command=lambda: self._open_folder(iid))
-        if iid.startswith("s"):
+        if sub is None:
             self.menu.add_command(label="Edit shop...",
                                   command=self._edit_shop)
+        if sub is None or sub == "bo":
+            self.menu.add_command(label="Add another back office...",
+                                  command=self._add_extra_bo)
+        if sub is not None and store.is_extra_key(sub):
+            self.menu.add_separator()
+            self.menu.add_command(label="Edit this back office...",
+                                  command=lambda: self._edit_extra(iid))
+            self.menu.add_command(label="Remove this back office",
+                                  command=lambda: self._remove_extra(iid))
         self.menu.tk_popup(event.x_root, event.y_root)
 
     def _open_folder(self, iid):
@@ -724,7 +878,9 @@ class App(tk.Tk):
             return
         d = ShopDialog(self, self.cfg["shops"][i], self.vnc_var.get())
         if d.result:
-            d.result["off"] = self.cfg["shops"][i].get("off", [])
+            for keep_key in ("off", "extra_bo", "extra_seq"):
+                d.result[keep_key] = self.cfg["shops"][i].get(
+                    keep_key, d.result[keep_key])
             self.cfg["shops"][i] = d.result
             self._save_cfg()
             self._fill_tree(keep=f"s{i}")
@@ -741,6 +897,66 @@ class App(tk.Tk):
             self.status = {}
             self._save_cfg()
             self._fill_tree()
+
+    def _add_extra_bo(self):
+        if self.busy or self.loading:
+            return
+        i = self._shop_index()
+        if i is None:
+            return messagebox.showinfo(
+                APP_TITLE, "Click the shop in the list first, then add its "
+                           "extra back office.")
+        shop = self.cfg["shops"][i]
+        d = BackOfficeDialog(self, shop)
+        if not d.result:
+            return
+        try:
+            x = store.add_extra_bo(shop, d.result["name"], d.result["path"])
+        except ValueError as e:
+            return messagebox.showwarning(APP_TITLE, str(e))
+        self._save_cfg()
+        self._fill_tree(keep=f"{i}:{store.extra_key(x['id'])}")
+        self.tree.item(f"s{i}", open=True)
+        self._log(f"{shop['name']}: added {x['name']} ({x['path']}).")
+
+    def _extra_from_iid(self, iid):
+        i, sub = iid.split(":")
+        i = int(i)
+        shop = self.cfg["shops"][i]
+        return i, shop, store.find_extra(shop, store.extra_id(sub))
+
+    def _edit_extra(self, iid):
+        if self.busy or self.loading:
+            return
+        i, shop, x = self._extra_from_iid(iid)
+        if x is None:
+            return
+        d = BackOfficeDialog(self, shop, x)
+        if not d.result:
+            return
+        try:
+            store.update_extra_bo(shop, x["id"], d.result["name"],
+                                  d.result["path"])
+        except ValueError as e:
+            return messagebox.showwarning(APP_TITLE, str(e))
+        self.status.pop(iid, None)
+        self._save_cfg()
+        self._fill_tree(keep=iid)
+
+    def _remove_extra(self, iid):
+        if self.busy or self.loading:
+            return
+        i, shop, x = self._extra_from_iid(iid)
+        if x is None:
+            return
+        if not messagebox.askyesno(
+                APP_TITLE, f"Remove {x['name']} from {shop['name']}'s list?\n"
+                           "Nothing on that PC is touched."):
+            return
+        store.remove_extra_bo(shop, x["id"])
+        self.status.pop(iid, None)
+        self._save_cfg()
+        self._fill_tree(keep=f"s{i}")
 
     def _import(self):
         added, skipped, src = store.import_from_reporter(self.cfg)
@@ -869,9 +1085,10 @@ class App(tk.Tk):
         out = []
         sel = self._selected_key()
         for i, s in enumerate(self.cfg["shops"]):
-            d = dict(s, _idx=i, want_bo=True, want_tills=None)
+            d = dict(s, _idx=i, want_bo=True, want_tills=None, want_extra=None)
             known = {t["number"] for t in
                      (self.tills.get(store._norm(s["bo_path"])) or []) if t.get("share")}
+            extra_ids = {x["id"] for x in s.get("extra_bo") or []}
             off = set(s.get("off", []))
             if mode == "all":
                 pass
@@ -879,6 +1096,8 @@ class App(tk.Tk):
                 d["want_bo"] = "bo" not in off
                 off_t = {int(k[1:]) for k in off if k.startswith("t")}
                 d["want_tills"] = (known - off_t) if off_t else None
+                off_x = {store.extra_id(k) for k in off if store.is_extra_key(k)}
+                d["want_extra"] = (extra_ids - off_x) if off_x else None
             else:  # one row
                 if not sel:
                     continue
@@ -889,11 +1108,15 @@ class App(tk.Tk):
                     si, sub = sel.split(":")
                     if int(si) != i:
                         continue
-                    d["want_bo"] = sub == "bo"
                     if not self._selectable(i, sub):
                         continue
-                    d["want_tills"] = {int(sub[1:])} if sub != "bo" else set()
-            if d["want_bo"] or d["want_tills"] is None or d["want_tills"]:
+                    d["want_bo"] = sub == "bo"
+                    d["want_extra"] = ({store.extra_id(sub)}
+                                       if store.is_extra_key(sub) else set())
+                    d["want_tills"] = ({int(sub[1:])} if sub.startswith("t")
+                                       else set())
+            if (d["want_bo"] or d["want_tills"] is None or d["want_tills"]
+                    or d["want_extra"] is None or d["want_extra"]):
                 out.append(d)
         return out
 
@@ -931,6 +1154,11 @@ class App(tk.Tk):
 
     def _count(self, shops):
         bo = sum(1 for s in shops if s["want_bo"] and self.pkg.bo)
+        if self.pkg.bo:
+            for s in shops:
+                w = s.get("want_extra")
+                bo += len([x for x in s.get("extra_bo") or []
+                           if w is None or x["id"] in w])
         tills = 0
         if self.pkg.pos:
             for s in shops:

@@ -163,6 +163,15 @@ def main():
             assert button.winfo_ismapped(), button.cget("text")
             assert button.winfo_rootx() + button.winfo_width() <= app.winfo_rootx() + app.winfo_width()
             assert button.winfo_rooty() + button.winfo_height() <= app.winfo_rooty() + app.winfo_height()
+        def walk(w):
+            yield w
+            for c in w.winfo_children():
+                yield from walk(c)
+        bo_btn = [w for w in walk(app) if w.winfo_class() == "TButton"
+                  and w.cget("text") == "Add back office"]
+        assert bo_btn and bo_btn[0].winfo_ismapped(), "Add back office button hidden"
+        assert bo_btn[0].winfo_rootx() + bo_btn[0].winfo_width() <= \
+            app.winfo_rootx() + app.winfo_width(), "Add back office button clipped"
         for widget in (app.tree, app.log, app.status_lbl):
             assert widget.winfo_ismapped()
             assert widget.winfo_height() >= 16, "main content collapsed at minimum size"
@@ -231,6 +240,133 @@ def main():
         assert snapshots and all(p.parent.joinpath("posdebtor.dat").is_file() for p in snapshots)
         assert not any(Path(s["bo_path"], "_koenekt_backup").exists() for s in cfg_s)
         print("POS data backups + manual BO policy: OK")
+
+        # --- extra back offices, through the real dialog
+        office = work / "shop0" / "office_pc"
+        stock = work / "shop0" / "stock_room"
+        office.mkdir()
+        stock.mkdir()
+        (office / "RP_BACK.exe").write_text("old-office-exe")
+
+        def dialog(cls):
+            return next(w for w in app.winfo_children() if isinstance(w, cls))
+
+        seen_hint = {}
+
+        def fill_extra(path, name, hint_key=None):
+            def go():
+                dlg = dialog(gui.BackOfficeDialog)
+                dlg.name.set(name)
+                dlg.path.set(str(path))
+                dlg._check()
+
+                def finish():
+                    if dlg.checked is None:
+                        return app.after(100, finish)
+                    if hint_key:
+                        seen_hint[hint_key] = dlg.hint.cget("text")
+                    dlg._save()
+                finish()
+            app.after(300, go)
+
+        app.tree.selection_set("s0")
+        fill_extra(office, "Office PC", "with_exe")
+        app._add_extra_bo()
+        fill_extra(stock, "Stock room", "no_exe")
+        app._add_extra_bo()
+        assert "Found RP_BACK.exe" in seen_hint["with_exe"], seen_hint
+        assert "no RP_BACK.exe" in seen_hint["no_exe"], seen_hint
+        assert app.tree.exists("0:b1") and app.tree.exists("0:b2")
+        assert app.tree.item("0:b1", "text") == "Back office 2 - Office PC"
+        assert app.tree.item("0:b2", "text") == "Back office 3 - Stock room"
+        kids = list(app.tree.get_children("s0"))
+        assert kids[:3] == ["0:bo", "0:b1", "0:b2"], kids  # right under the main BO
+        assert app.tree.set("0:b1", "where") == str(office)
+        saved = store.load()["shops"][0]
+        assert [x["name"] for x in saved["extra_bo"]] == ["Office PC", "Stock room"]
+        print("add 2 extra back offices via the real dialog (+ folder check hints): OK")
+
+        # a duplicate of the main folder, typed with a trailing backslash, is refused
+        warned = []
+        with patch.object(messagebox, "showwarning",
+                          lambda t, m, **k: warned.append(m)):
+            def dup():
+                dlg = dialog(gui.BackOfficeDialog)
+                dlg.path.set(cfg_s[0]["bo_path"] + "\\")
+                dlg._save()
+                if dlg.winfo_exists():
+                    dlg.destroy()
+            app.after(300, dup)
+            app._add_extra_bo()
+        assert warned and "main back-office" in warned[0], warned
+        assert len(app.cfg["shops"][0]["extra_bo"]) == 2
+        print("duplicate of the main folder refused: OK")
+
+        # upgrade ONE extra back office
+        app.tree.selection_set("0:b1")
+        app._upgrade("row")
+        assert wait_for(app, lambda: not app.busy and app.status.get("0:b1"))
+        assert has(office) and not has(stock), "row upgrade touched the wrong folder"
+        assert (office / "RP_BACK.exe").read_text() != "old-office-exe"
+        assert "BO_" in app.tree.set("0:b1", "status")
+        print("one extra back office only: OK  ->", ascii(app.tree.set("0:b1", "status")))
+
+        # untick the stock room: ticked upgrade skips it, shop shows a mixed state
+        app._toggle_tick("0:b2")
+        assert not app._ticked(0, "b2") and app._shop_state(0) == "some"
+        sel0 = [d for d in app._selection("ticked") if d["_idx"] == 0][0]
+        assert sel0["want_extra"] == {1}, sel0["want_extra"]
+        app._upgrade("ticked")
+        assert wait_for(app, lambda: not app.busy and app.status.get("0:bo"))
+        assert not has(stock), "unticked extra back office was upgraded"
+        print("unticked extra back office skipped: OK")
+
+        # ALL ignores ticks and reaches it
+        app._upgrade("all")
+        assert wait_for(app, lambda: not app.busy and app.status.get("0:b2"))
+        assert has(stock) and (stock / "RP_BACK.exe").is_file()
+        print("ALL includes extra back offices: OK")
+
+        # editing the shop keeps its extra back offices
+        def rename_shop():
+            dlg = dialog(gui.ShopDialog)
+            dlg.name.set("Shop 0 renamed")
+            dlg._save()
+        app.tree.selection_set("s0")
+        app.after(300, rename_shop)
+        app._edit_shop()
+        assert app.cfg["shops"][0]["name"] == "Shop 0 renamed"
+        assert len(app.cfg["shops"][0]["extra_bo"]) == 2 and app.tree.exists("0:b2")
+        print("editing a shop keeps its extra back offices: OK")
+
+        # edit one extra, then remove it (ticks and results are forgotten)
+        def rename_extra():
+            dlg = dialog(gui.BackOfficeDialog)
+            dlg.name.set("Stock room (renamed)")
+            dlg._save()
+        app.after(300, rename_extra)
+        app._edit_extra("0:b2")
+        assert app.tree.item("0:b2", "text") == "Back office 3 - Stock room (renamed)"
+        app._remove_extra("0:b2")
+        assert not app.tree.exists("0:b2") and "b2" not in app.cfg["shops"][0]["off"]
+        assert (stock / "RP_BACK.exe").is_file(), "removing from the list touched the PC"
+        nxt = store.add_extra_bo(app.cfg["shops"][0], "later", str(stock))
+        assert nxt["id"] == 3, "a removed id was reused"
+        store.remove_extra_bo(app.cfg["shops"][0], 3)
+        print("edit + remove extra back office; ids never reused: OK")
+
+        # a plain click on the extra's tick box works like any other row
+        app._fill_tree()
+        iid = "0:b1"
+        x, y, width, height = app.tree.bbox(iid, "#0")
+        image_x = next(px for px in range(x, x + width)
+                       if "image" in app.tree.identify_element(px, y + height // 2))
+        before = app._ticked(0, "b1")
+        app.tree.event_generate("<Button-1>", x=image_x, y=y + height // 2)
+        app.update()
+        assert app._ticked(0, "b1") != before
+        app._toggle_tick(iid)  # leave it ticked
+        print("tick box on an extra back office row: OK")
 
         # --- a junk drop is refused, the loaded package survives
         junk = work / "junk.zip"

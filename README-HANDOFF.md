@@ -6,11 +6,67 @@ push, and tell the user.
 
 ## Current state
 
-- **Date / assistant:** 2026-10-09, Codex (GPT-6).
-- **Version:** 1.4.0. Both portable EXEs published as the latest GitHub release:
-  https://github.com/loudalley/vector-up/releases/tag/v1.4.0.
+- **Date / assistant:** 2026-10-24, Claude (extra back offices, step 1).
+- **Version:** 1.4.0 is the latest RELEASE (both portable EXEs):
+  https://github.com/loudalley/vector-up/releases/tag/v1.4.0. The source on
+  `master` is AHEAD of it: it adds extra back offices (below). `VERSION` is
+  still 1.4.0 and no new EXEs were built or published. Bump `VERSION` (1.5.0
+  suggested) and release when the user asks.
 - **Repo:** https://github.com/loudalley/vector-up (PUBLIC), `master`.
 - **Local:** `C:\Projects\koenekt-upgrade-tool`. Sister project not edited.
+
+### Latest change (unreleased): extra back offices, added by hand
+
+Why: some shops have a second, third or fourth back-office PC, each with its
+own RP_BACK program folder that also needs the upgrade.
+
+- A shop can list extra back offices (`shop["extra_bo"]` = `{id, name, path}`).
+  **Add back office** button, or right-click a shop / its main Back office row.
+  Rows show under the main one as "Back office 2 - <name>", 3, 4... with their
+  own tick, Result and "Upgrade this back office only". Double-click edits;
+  right-click removes (from the list only; nothing on the PC is touched).
+- They are ordinary BO targets (`engine.build_plan`, keys `<shop>:b<id>`): same
+  BO payload, `_UpgradeRequired` last and withheld on failure, reachability
+  check first, nothing deleted. Selection supports one / ticked / all via
+  `want_extra`. Editing a shop keeps its extras. Limit 20 per shop.
+- Ids are never reused (`extra_seq`), so a stale untick or result cannot land
+  on a different back office.
+- The dialog has a threaded **Check folder** (`engine.inspect_bo_folder`):
+  reachable? contains `RP_BACK.exe`? Warns before saving a folder without it,
+  refuses a duplicate or the shop's main folder, and warns if a drive-letter
+  path (`C:\...`) is used for a remote shop (it would copy onto THIS PC).
+- **Bug fixed along the way (older than this change):** `\\pc\share` and
+  `\\pc\share\` normalised differently (`os.path.normpath` keeps the trailing
+  slash on a UNC share root), so the same folder typed two ways escaped
+  duplicate detection in the planner and in Reporter import. `store._norm` now
+  strips it and `engine.build_plan` uses it. POS-backup fingerprints still use
+  the old normpath on purpose (changing it would rename existing backup folders).
+- **Detection is NOT built.** Finding RP_BACK folders automatically is the
+  planned step 2 (read `AlternateBoDir` in `VectorAdmin.ini`; list shares on the
+  back-office server and same-subnet hosts via NetShareEnum and look for
+  `RP_BACK.exe`; confirm by reading that folder's `VectorAdminLocal.ini`
+  `AdminDataDirectory`, which should point at the shop's data folder). Unknown:
+  whether the user's multi-back-office shops run their own local RP_BACK copy
+  per PC or all launch one shared folder (then nothing extra to upgrade). The
+  only shop dump on hand is single-back-office (`BackOfficeMode=0`,
+  `AlternateBoDir` empty). A `VectorAdmin.ini` + `VectorAdminLocal.ini` from a
+  real multi-back-office shop would settle it (settings only, no data).
+- Tests: new `tests/test_extra_bo.py` (26 tests: store, planning, real copies,
+  unreachable/locked extras, folder inspection, trailing-slash regression).
+  `tests/test_techtool.py` 64 OK (1 real-package skip). `tests/check_techtool_gui.py`
+  extended and driving the real window and the real dialogs: add two extras
+  with folder-check hints, duplicate refusal, one extra only, unticked extra
+  skipped, ALL includes them, shop edit keeps them, edit/remove, id never
+  reused, tick box click, and the new button visible at minimum size. It passed
+  3 of 3 re-runs; its first run failed once on the existing Escape-dismisses-
+  intro assertion (keyboard focus dependent, unrelated to this change).
+  Visually inspected the real window with extra back offices.
+- NOT verified: against a real multi-back-office shop; real shares; whether
+  Vector upgrades the extra copies correctly or needs a particular order or
+  version match across back offices; the right-click context menu itself (its
+  code paths are exercised, the popup is not driven).
+- Next: user to confirm how their multi-back-office shops are laid out, then
+  either release this as 1.5.0 or build step 2 (detection).
 
 ### Latest handoff: 1.4.0 release published
 
@@ -106,6 +162,16 @@ local POS backups and Vector's own next-start upgrade. Record live results
 here. Both EXEs and SHA-256 notes are now published.
 
 ## Handoff log
+
+- **2026-10-24 - Claude, unreleased (after 1.4.0):** extra back offices added by
+  hand (second/third/fourth RP_BACK folders) as ordinary BO targets with their
+  own tick/result/row upgrade, a Check folder dialog and duplicate/drive-path
+  guards; fixed UNC trailing-slash duplicate detection. New `tests/test_extra_bo.py`
+  (26 OK), `test_techtool.py` 64 OK, extended GUI check passed (3/3 re-runs, one
+  focus-related flake on the first run of the old Escape assertion). No EXEs
+  built or released; VERSION unchanged. Not tried on a real multi-back-office
+  shop. Automatic detection NOT built. Next: user describes real layout, then
+  release 1.5.0 or build detection.
 
 - **2026-10-09 - Codex (GPT-6), 1.4.0:** published latest GitHub release
   v1.4.0 with both portable EXEs and SHA-256 notes. Verified build logs, PE
